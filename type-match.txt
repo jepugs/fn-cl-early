@@ -1,0 +1,113 @@
+The two special types (for now) are or and ->.
+
+Variables & wildcards match any subtype
+
+Compound types match on the following principles
+- they must have the same type constructor
+- each respective argument must match
+
+
+
+Values vs Making List a Special Type
+
+Sometimes functions return multiple things that all have well-defined types. We
+have three choices for implementing this, namely multiple return values, tuples,
+and lists. Tuples and lists both would require the introduction of a special
+type.
+
+We're going to be adding special types anyway. For instance, we will want to use
+dicts as general objects where we can add types that depend on the key. In fact,
+used this way, objects can all but replace record types, greatly improving our
+object system.
+
+
+
+ADTs (schemas) vs more general types
+
+The question: do we really need a full ADT system? Or would it be enough to just
+have objects and sequences with typed slots? Consider the pros/cons of each.
+
+
+ADT Pro:
+- Clean method for high-performance polymorphism via protocols
+- Easy definition of type-safe enumerations
+- Much neater way to define types like Maybe, Either
+- Play well with pattern matching
+- Inherently more general and extensible
+
+ADT Con:
+- Crowded constructor and pattern namespace
+- Questionable utility
+- Need to use patterns to access fields
+- Record types are a mess
+- Symbols/keywords kind of already do enumerations
+- More complicated implementation
+- 
+
+
+Object-only Pro:
+- lightweight
+- covers most cases
+- simpler syntax
+
+Object-only Con:
+- see ADT pro
+- lack of object names obfuscates function behavior
+
+
+Considerations:
+- use keywords for vars?
+
+
+
+Experiment: How do Queues look with the two respective type systems? (Assume we
+use a simple purely-functional implementation that has only push & pop
+functions).
+
+;;; ADTs
+(defschema (queue a)
+  ;; the keyword names are optional
+  (queue :front a :back a))
+(defn q-is-empty (q)
+  (type (queue _) -> bool)
+  (match q
+    (queue [] []) true
+    _             false))
+(defn push (q v)
+  (type (queue a) a -> (queue a))
+  (match q
+    (queue [] []) (new queue [v] [])
+    (queue f b)   (new queue f [v & b])))
+(defn peek (q)
+  (type (queue a) -> a)
+  (first (@ :front q)))
+(defn pop (q)
+  (type (queue a) -> (queue a))
+  (match q
+    (queue [] b) (new queue (rest (reverse b)) [])
+    (queue [x] b) (new queue (reverse b) [])
+    (queue f b) (new queue (rest f) b)))
+
+;;; without
+(defn make-queue (front back)
+  {:front front :back back})
+(deftype (queue a)
+  {:front [a] :back [a]})
+(defn is-empty (q)
+  (type (queue a) -> bool)
+  (match q
+    {:front [] :back []} true
+    _                    false))
+(defn push (q v)
+  (type (queue a) a -> (queue a))
+  (match q
+    {:front [] []} (make-queue [v] [])
+    {:front f b}   (make-queue f [v & b])))
+
+;; eval this to add highlighting
+(font-lock-add-keywords
+ nil
+ '(("\\_<\\(bind\\|def\\|defn\\|defschema\\|type\\|new\\|true\\|false\\)\\_>" .
+    'font-lock-keyword-face)
+   ("\\_<\\(match\\|&\\)\\_>" . 'font-lock-keyword-face)))
+
