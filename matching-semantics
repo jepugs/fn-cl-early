@@ -1,0 +1,76 @@
+The essence of type checking is this: we have a function, which is a series of
+argument types and a single return value type (w/ multiple values coming soon).
+These types are probably full of variables and so we basically just need to
+ensure that these variables match up to the same thing in general.
+
+Here is where things get complicated: functions can get passed around as
+arguments, and hence you can have variables contained both in the pattern and in
+the actual type. The problem is that the arguments probably don't use the same
+variables as the pattern, so we need to keep track of whether.
+
+Consider the types:
+
+(defn id (x)
+  (type a -> a)
+  x)
+
+(defn map (f seq)
+  (type (a -> b) [a] -> [b])
+  ...)
+
+(defn mapcat (f string)
+  (type (ch -> ch) string -> string)
+  ...)
+
+
+MEANINGS:
+
+(def (a b) (floor 4.2))
+;; a = 4.0, b = 0.2
+(def [a b] (floor 4.2))
+;; DANGEROUS! Binds LIST to 4.0
+;; emit a warning here: 'You probably meant (def ([a b]) ...)'
+(def ([a b]) (floor 4.2))
+
+
+How I want type matching to work:
+
+NO SPECIAL FORMS (yet)!
+
+- same type constructor
+- same arguments
+
+
+
+(either a (maybe a))
+
+Good:
+(either 'symbol (maybe 'symbol))  ; a => 'symbol
+(either 'number (maybe 'number))  ; a => 'number
+
+Bad:
+(either 'symbol (maybe 'number))  ; a => 'symbol AND
+                                  ; a => 'number
+
+
+Assume no variables in sub.
+
+- If an argument encounters a variable
+  - check if it has been bound already
+  - if it has, make sure that the new match is equal
+  - otherwise, add the new match to the bindings
+
+
+
+match
+pattern (a b -> b)
+x   ((b -> b) b -> b)
+
+a := (b->b)
+b := b
+
+pattern (a b -> b)
+x   ((a -> a) a -> a)
+
+a := a -> a
+b := a

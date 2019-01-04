@@ -1,0 +1,29 @@
+
+
+Type operations:
+
+
+
+I want
+
+ (i)  to check whether the arguments have the correct types
+(ii)  to determine the output type
+
+
+Type grammar:
+
+TYPE      ::= <PRIMITIVE>|<VAR>|<NORMAL>|<FUNCTION>|<SPECIAL>
+PRIMITIVE ::= number|char|symbol|cons|object
+VAR       ::= <ID>
+NORMAL    ::= (<ID> <TYPE>*)
+FUNCTION  ::= (<TYPE>* -> <TYPE>)
+SPECIAL   ::= <WILDCARD>|<ALTERNATE>
+ALTERNATE ::= (or <TYPE>*)
+WILDCARD  ::= _
+
+ID is a symbol other than the primitive or special types.
+
+
+Type matching semantics:
+
+

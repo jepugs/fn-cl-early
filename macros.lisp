@@ -5,6 +5,11 @@
 ;;; Utility functions
 ;;;;;;
 
+(defmacro aif (test then else)
+  "Anaphoric IF binds the value of TEST to IT in the clauses."
+  `(let ((it ,test))
+     (if it ,then ,else)))
+
 (defun flatten (tree)
   "Turn a tree into a list of its leaves. Returns a list even if the tree is an
 atom, e.g. (flatten 'a) -> (A)."

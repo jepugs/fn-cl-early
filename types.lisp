@@ -114,17 +114,24 @@ primitive types.")
 
 ;;;; BIGFIXME: I'm pretty sure all these binding combination functions are very,
 ;;;; very broken. We need to work this one out on a whiteboard.
-(defun combine-binding (sym x y)
-  "Helper for PAIRWISE-COALESCE. Attempts to combine X and Y into a single
-binding with name SYM and returns an ALIST of variable bindings including SYM.
-Returns NIL on failure."
-  (let ((xy (is-subtype x y)))
-    (if xy
-        `((,sym . ,y) . ,(cdr xy))
-        (let ((yx (is-subtype y x)))
-          (if yx
-              `((,sym . ,x) . ,(cdr yx))
-              nil)))))
+(defun type= (a b)
+  (if (listp a)
+      (and (listp b)
+           (eq (tcons-of a) (tcons-of b))
+           (mapcar #'type= (cdr a) (cdr b)))
+      (eq a b)))
+
+(defun combine-bindings (x y)
+  (mapcar $(let ((bx (assoc $ x))
+                 (by (assoc $ y)))
+             (if (and bx bx)
+                 (if (type= (cdr bx) (cdr by))
+                     bx
+                     (return-from combine-bindings nil))
+                 (or bx by)))
+          (remove-duplicates (append (mapcar #'car x)
+                                     (mapcar #'car y)))))
+
 
 (defun pairwise-coalesce (x y)
   "Helper for COALESCE-BINDINGS."
@@ -144,7 +151,7 @@ Returns NIL on failure."
                           (if c
                               (setq res (nconc c res))
                               (return nil))))))
-         (return (nreverse res))))))
+         (nreverse res)))))
 
 (defun coalesce-bindings (alists)
   "Attempt to combine a bunch of type variable bindings. Returns (T . bindings)
@@ -195,6 +202,26 @@ bindings) if true, where bindings is an ALIST of variables in SUPER."
         ((eq (tcons-of sub) 'or) (or-supertype (cdr sub) super))
         ((is-special-t super)
          (special-subtype sub super))
-        ((is-prim-t super) (prim-subtype sub super))
         (t (and (eq (tcons-of sub) (tcons-of super))
                 (mapcar #'is-subtype (cdr sub) (cdr super))))))
+
+
+;; variables in x match anything in pattern
+;; wildcards in x only match wildcards in pattern
+
+(defun type= (x y)
+  (equal x y))
+
+
+(defun match-type (pattern x &optional (vars nil))
+  (cond
+    ((is-wildcard-t pattern) (cons t vars))
+    ((is-var-t pattern)
+     (let ((b (assoc pattern vars)))
+       (if b
+           (if (type= (cdr b) x)
+               (cons t vars)
+               nil)
+           `(t . ((,pattern . x) . ,vars)))))
+    ((is-special-t pattern)
+     (special-match-type pattern x vars))))

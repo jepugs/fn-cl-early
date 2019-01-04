@@ -1,0 +1,7 @@
+Types subsystem:
+
+type-defs.lisp -- Classes, conditions, and basic operations on types
+
+type-parse.lisp -- Functions to convert lists to type objects
+
+type-match.lisp -- Semantics of types
