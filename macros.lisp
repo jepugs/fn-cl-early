@@ -1,6 +1,8 @@
 ;;;; macros.lisp --- A conservative set of FN reader and control flow macros
 ;;;; implemented in portable ANSI Common Lisp.
 
+(in-package :fn-impl)
+
 ;;;;;;
 ;;; Utility functions
 ;;;;;;
@@ -22,6 +24,16 @@ atom, e.g. (flatten 'a) -> (A)."
   "Make a symbol by concatenating ARGS as a string"
   (let ((strs (mapcar #'princ-to-string args)))
     (intern (apply #'concatenate 'string strs))))
+
+(defun group (n list)
+  "Partition LIST into sublists of length N"
+  (labels ((recur (m tail res)
+             (if (zerop m)
+                 (cons (nreverse res) (group n tail))
+                 (recur (1- m) (cdr tail) (cons (car tail) res)))))
+    (if list
+        (recur n list nil)
+        nil)))
 
 (defun name-eq (sym1 sym2)
   "Check symbol-name equality"
@@ -254,4 +266,5 @@ read as (list args)."
        (set-macro-character ,close #',closer))))
 
 (set-del-reader #\[ #\] 'list)
-(set-del-reader #\{ #\} 'dict)
+;;(set-del-reader #\{ #\} 'new)
+
