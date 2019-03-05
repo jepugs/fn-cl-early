@@ -141,20 +141,168 @@
 
 * design ideas
 
-- parentheses denote code objects. quote and backquote return code objects that
-  can be used by the program. Unquoted code is evaluated. Code objects are made
-  out of primitive types, symbols, and conses.
-- square brackets are for lists (and consequently trees). Lists are singley
-  linked in classic lisp fashion. We use the ampersand (&) instead of the dot
-  for inline conses.
-- rejected idea (don't repeat this mistake): & is a function so (& a b c) := [a
-  b & c].
-- make objects with the keyword NEW. Schemas decide their own constructor
-  parameters
-- Every schema has a corresponding pattern matcher
-- When looking up an object's schema, we will use the class name of the object
-  as the key for a hash table. This is to make the lookup as fast as possible.
+  - parentheses denote code objects. quote and backquote return code objects
+    that can be used by the program. Unquoted code is evaluated. Code objects
+    are made out of primitive types, symbols, and conses.
+  - square brackets are for lists (and consequently trees). Lists are singley
+    linked in classic lisp fashion. We use the ampersand (&) instead of the dot
+    for inline conses.
+  - rejected idea (don't repeat this mistake): & is a function so (& a b c) :=
+    [a b & c].
+  - make objects with the keyword NEW. Schemas decide their own constructor
+    parameters
+  - Every schema has a corresponding pattern matcher
+  - When looking up an object's schema, we will use the class name of the object
+    as the key for a hash table. This is to make the lookup as fast as possible.
 
 
+* Experimental Zone
 
+  This is where I'm gonna put some wild ideas that I'm not sure about.
+
+** matching in lambda lists (actually this feature sucks)
+
+   In Common Lisp, we have these &-symbols for special arguments:
+
+   #+BEGIN_SRC common-lisp
+   (defun f (&optional fuck-me-sideways) ...)
+   #+END_SRC
+
+   But, we could also have these things:
+
+   #+BEGIN_SRC common-lisp
+   (defun f (&match [x y z]) ...)
+   #+END_SRC
+
+   which would do pattern-based destructuring on the argument.
+
+   One problem is that we've nixed &-symbols in our version of defun, so we have
+   parenthesized forms for variable names and keywords. Even then, it would be
+   cumbersome to type &match before every pattern argument.
+
+
+** unified definition
+
+   First off, let's not kid ourselves: DEFPARAMETER is too long of a name.
+   DEFVAR is not so bad, but usually we want DEFPARAMETER behavior, rather than
+   DEFVAR behavior.
+
+   We could use the names DEF, DEF-ONCE, VAR, SET, or :=. VAR and SET run into
+   the issue that they clobber Common Lisp primitives.
+
+   #+BEGIN_SRC common-lisp
+   ;; Variable definitions-- CL now
+   (defparameter x 6)
+   ;; alternatives
+   (def x 6)
+   (set x 6)
+   (var x 6)
+   (:= x 6)
+
+   ;; Constant definitions
+   (defconstant pi 3.14)
+   (defconst pi 3.14)
+   (const pi 3.14)
+
+   ;; top level function definitions
+   (defun f (x)
+     body)
+   (defn f (x)
+     body)
+   (function f (x)
+     body)
+   (def f (x)
+     body)
+   #+END_SRC
+
+   Currently, we're going to use DEF for declarations, SET for updates, CONST
+   for constants, and DEFN for functions.
+
+   #+BEGIN_SRC common-lisp
+   (defparameter x 6)
+   ;; => (in FN)
+   (def x 6)
+
+   (defconstant pi 3.14)
+   ;; =>
+   (const pi 3.14)
+
+   (defun log (x &optional (base 10))
+     ...)
+   ;; =>
+   (defn log (x (base 10))
+     ...)
+   ;; or, equivalently, (but not until the future)
+   (def log
+     (fn (x (base 10))
+       ...))
+   #+END_SRC
+
+
+** function options
+
+   Functions look like this:
+
+   (fn (args) body)
+
+   We would like to customize function behavior. If the first argument of the
+   function body is a dict form (denoted below with braces), and the body has
+   length > 1, then we will use that dictionary as the function options:
+
+   (fn (args)
+     {:option-name option-value ...}
+     body)
+
+   Some ideas for options are:
+
+   - :type, :optimize, :ignore, ignoreable :: replace DECLARE forms
+   - :inline BOOL :: whether to inline this function
+   - :curry N :: automatically curry up the first N arguments. Or, if N is true,
+                 then curry all positional arguments (default: false, eqv. 0)
+   - :memo BOOL :: memoize the function if true (default: false)
+   - :doc STR :: docstring (only in definitions)
+   - :arg-doc LIST :: argument documentation (only in definitions)
+
+
+** Should this be a LISP-2?
+
+   It's really nice to have a separate namespace for operators and for
+   variables. Of course a single namespace isn't so bad if you have lexical
+   scope instead of dynamic scope, although it can cause trouble for macros and
+   it is further complicated by the requirement to declare local variables
+   globally. We might want rethink that.
+
+   An alternative option is this: functions and variables share a namespace,
+   HOWEVER, the default scope for operators is global. Local functions could
+   still screw us on macroexpansion though.
+
+   The big issue is always macros. In a LISP-2, unless some extremely misguided
+   individual is defining function names that clobber global functions used by
+   macros, then all is good. However, in a LISP-1, all variable names are thrown
+   into the mix, which complicates things.
+
+   One option that I like very much is to change the way we do package
+   resolution for symbols. Here's what I'd propose: normally, the reader will
+   place all symbols that do not have an explicit package in a special package
+   named LOCAL. LOCAL is a special package for lexically-bound variables. The
+   special thing about it is that it will fail over to the package in which the
+   code was defined if a symbol is unbound. This will have to be worked out
+   during compilation. However, the quote and quasiquote operators will read
+   symbols using the current package. The interface would look something like
+   this:
+
+   #+BEGIN_SRC common-lisp
+   (def read ((stream stdin) (package :local))
+     (dispatch-on-stream stream))
+   #+END_SRC
+
+   Then you avoid the issue of user code clobbering necessary macro functions,
+   and it's completely painless to do variable capture-- all you need to do is
+   write local::unhygienic-thing and you're good to go! You will still need
+   gensyms, though.
+
+   We will meditate on this further in the future.
+
+
+* Immediate future
 
