@@ -1,0 +1,160 @@
+* Implementation and Bootstraps
+
+  - Everything is implemented in Common Lisp. The only supported implementation
+    is SBCL. No particular effort is made to maintain ANSI compliance, although
+    most of the code is ANSI anyway.
+  - Most of the code is in the FN-IMPL package. This package makes use of some
+    features of FN (for instance, the $ reader macro), but we avoid shadowing
+    any variables from the CL package.
+  - The FN package is a drop-in replacement for the CL package that turns common
+    lisp into FN.
+  - There will be a standard library one day. It will initially be implemented
+    entirely in FN and Common Lisp, but we would like to do a lot of it in C++
+    (i.e. threads, networking, matrix operations) eventually.
+  - At some point, I will likely reach the limit of what Common Lisp macros can
+    easily do, and will need to begin the lengthy undertaking of writing a
+    custom VM and interpreter. Beyond that, a dedicated compiler and FFI will
+    eventually be desirable, so depending on how far I take this, we may need to
+    reimplement the whole damn thing in C++.
+  - The benefit to the current implementation of FN is that we can trivially use
+    any Common Lisp libraries from FN source, so a crucial precondition to
+    reimplementing the core language would be ensuring that it has a very rich
+    standard library.
+
+
+* Schemas and Patterns
+
+  A schema describes an algebraic data type. They are used in pattern matching and
+  by the new keyword.
+
+  #+BEGIN_SRC common-lisp
+  (defschema NAME &REST FIELDS) ; => nil
+
+  (new NAME &REST FIELD-VALUES) ; => instance of NAME
+
+  (@ INSTANCE FIELD) ; => value of FIELD in INSTANCE
+
+  (match OBJ
+    (NAME &REST VARS)
+      EXPR
+    ...)
+  ;; => if OBJ matches the schema, bind the field values to VARS and execute 
+  ;;    EXPR
+  #+END_SRC
+
+
+** Advanced Schemas
+
+   Schemas are implemented in such a way that construction, access, and
+   destructuring (i.e. pattern matching) can all be handled independently by
+   general functions. This isn't especially useful in general, but it allows
+   definition of special behaviors i.e. for dicts and linked lists.
+
+
+** Schema Implementation
+
+   Schemas are implemented via the schema class. Pertinent slots are:
+
+   - name :: a symbol representing the name of the schema. This is used to
+             identify it in constructors, accessors, and patterns and it *must*
+             be unique in the schema table
+   - data-class :: the class associated with the schema. This is used to
+                   match schemas to instance objects, so it must be unique.
+   - construct :: a function (f ARGS) that returns an instance of this Schema
+   - access :: a function (f INSTANCE FIELD-NAME) that gets fields from the
+               object
+   - destruct :: a function (f PATTERN-ARGS OBJ) that returns a bindings object
+                 or NIL
+
+
+* New lambda lists
+
+  Here's what we have in Common Lisp:
+
+  #+BEGIN_SRC common-lisp
+  (defun func (POSITIONAL-ARGS SPECIAL-ARG*) ...)
+  #+END_SRC
+
+  with
+
+  - POSITIONAL-ARGS ::= SYMBOL*
+  - SPECIAL-ARG ::= &rest SYMBOL | &whole SYMBOL | &body SYMBOL |
+                    &key OPT-ARG* | &optional OPT-ARG*
+  - OPT-ARG ::= SYMBOL | (SYMBOL VALUE)
+ 
+  For now, we're going to completely nix &whole and &body. We will replace &rest
+  directly with the symbol & (the ampersand by itself, like in Clojure). We
+  replace &optional and &key with parenthesized forms as seen in the example
+  below.
+
+  #+BEGIN_SRC common-lisp
+  (defun operator (operand0 &rest operands) ...)
+  ;; => (in FN)
+  (defun operator (operand0 & operands) ...)
+
+  (defun log (x &optional (base 10)) ...)
+  ;; => lists starting w/ non-keyword symbols replace &optional
+  (defun log (x (base 10)) ...)
+
+  (defun sort (seq &key (test #'< test-p) (ascending t)) ...)
+  ;; => lists starting with keywords replace &key
+  (defun sort (seq (:test #'< test-p) (:ascending t)) ...)
+  #+END_SRC
+
+  *Rationale:* I personally think argument lists in Common Lisp are too verbose
+  and rather ugly because of it. By cutting out all of the &-symbols (except the
+  rather intuitive & itself), the argument lists are shorter if nothing else. As
+  a matter of taste, it also seems more LISP-y.
+
+  *Key arg packages: a semantic gotcha:* In CL it is generally legal to use
+  variables in an external package as function arguments. Our implementation of
+  keyword arguments means that keyword symbol names will always appear in the
+  package (sane-package). Since gensyms have null packages, this means that it
+  is, for now, impossible to use them as names for keyword arguments. Of course,
+  gensyms are generally useless as keyword arguments anyway, so this shouldn't
+  matter.
+
+
+* TODO:
+
+  - implement dictionaries in dict.lisp
+  - make PATTERN-VARS smarter
+  - implement DEFN
+  - implement protocols
+  - set up syntax highlighting and indentation
+  - schema index sets
+  - add slices and iterators
+  - add lazy lists and teach fold, map, and filter about them
+  - add 
+
+
+* Misc functions/macros
+
+  - defschema
+  - with-fields, with-fields*
+  - match
+  - dict
+  - new
+  - @
+  - fold, map, filter, zip
+
+
+* design ideas
+
+- parentheses denote code objects. quote and backquote return code objects that
+  can be used by the program. Unquoted code is evaluated. Code objects are made
+  out of primitive types, symbols, and conses.
+- square brackets are for lists (and consequently trees). Lists are singley
+  linked in classic lisp fashion. We use the ampersand (&) instead of the dot
+  for inline conses.
+- rejected idea (don't repeat this mistake): & is a function so (& a b c) := [a
+  b & c].
+- make objects with the keyword NEW. Schemas decide their own constructor
+  parameters
+- Every schema has a corresponding pattern matcher
+- When looking up an object's schema, we will use the class name of the object
+  as the key for a hash table. This is to make the lookup as fast as possible.
+
+
+
+

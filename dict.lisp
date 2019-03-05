@@ -1,0 +1,2 @@
+;;; Purely Function Dictionary
+

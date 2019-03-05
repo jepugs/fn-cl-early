@@ -3,10 +3,6 @@
 (load "macros.lisp")
 
 
-;; destructure an FN-style arguments list
-;;(defun )
-
-
 (defclass abstract-schema ()
   ((name :initarg :name
          :type symbol
@@ -49,6 +45,7 @@
            :documentation "ARG-LIST of fields in the schema."))
 
   (:documentation "A schema with the standard record structure"))
+
 
 (defgeneric schema-construct (schema args))
 (defgeneric schema-get (schema instance field))
@@ -127,6 +124,11 @@
          (schema-get it obj i)
          (error "@: ~a has unknown class" obj))))
 
+(defun (setf @) (obj i v)
+  (let ((x (class-name (class-of obj))))
+    (aif (gethash x schemas-by-class)
+         (schema-set it obj i v))))
+
 (defmacro new (name &rest args)
   `(new* ',name ,@args))
 
@@ -144,9 +146,12 @@
   :construct #'list
   ;; FIXME: accessor gives null when field is outside its range
   :get (lambda (instance field)
-         (declare (type integer field))
+         (declare (type integer field)
+                  (type instance list))
          (nth field instance))
   :set (lambda (instance field value)
+         (declare (type instance list)
+                  (type integer field))
          (setf (nth field instance) value))
   :match (lambda (match-args obj)
            (labels ((recur (patterns tail res)
@@ -162,3 +167,19 @@
                                    nil))
                           res)))
              (recur match-args obj (make-instance 'bindings))))))
+
+;; add the dict schema
+(add-schema
+ (make-instance
+  'general-schema
+  :name 'dict
+  :data-classes 'hash-table
+  :construct #'dict
+  :get (lambda (instance field)
+         (declare (type instance list))
+         ())))
+
+;; dict pattern is
+;; (dict KEYFORM PATTERN KEYFORM PATTERN ...)
+;; KEYFORM := KEY | (KEY DEFAULT-VALUE)
+;; recommended to use :keywords for dict schema
