@@ -1,0 +1,40 @@
+* Glossary intro
+
+  This is an informal glossary which can be used to aid in reading the code and
+  comments. It will also serve as a handy reference for my variable naming
+  conventions once I get off my lazy butt and decide on one. We're trying to do
+  this by the code complete best practices
+
+
+* General terms
+
+  - arguments :: the *tail* of a *code list*
+  - args :: abbreviation of *arguments*
+  - clause :: an abstract pairing of a *test* and an *expression* that is
+              evaluated if the test succeeds
+  - code list :: a list contained in an *expression*
+  - expression :: a code form to be evaluated
+  - head (of a list) :: the first entry in a list
+  - macro :: a special function which takes and returns code objects. To
+             evaluate, or *expand*
+  - namespace :: a set of *symbols* used primarily to avoid name collisions
+  - operator :: the *head* of a *code list*. In practice this refers to
+                function-valued *expressions* and *macro* and *pattern* names
+  - symbol :: code representing a *variable* or *macro* name. Symbols may have
+              values associated with them. These are also handy as data types
+              because they have string names, but equality *tests* between
+              symbols are very fast. Every symbol belongs to a unique
+              *namespace*
+  - tail (of a list) :: the list consisting of all objects after the first
+       entry in a list. The tail of the empty list is again the empty list
+
+
+* Schemas and Pattern Matching
+
+  - pattern :: a tree which represents the structure of an object. Pattern
+               matching uses a pattern to create lexical bindings
+  - pattern args :: the arguments to a pattern (everything except the pattern
+                    name)
+  - pattern matching :: the process of creating lexical bindings by
+  - schema :: a structure that describes the data contained in a type of object
+
