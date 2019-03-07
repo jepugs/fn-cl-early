@@ -1,20 +1,16 @@
-(defpackage :fn-impl
-  (:use :common-lisp)
-  (:export :@ :$ :& :_ :and-then :def :defn :defschema :dict :fn :match :my-cond
-           :my-let :new))
 
 ;; symbols from CL we don't export in FN
-(defparameter cl-omit [:defun :let :let* :defvar :defparameter])
+(defparameter cl-omit '(:defun :let :let* :defvar :defparameter))
 
 ;; all symbols exported from CL
 (defparameter cl-exports
   (->$ (find-package :cl)
-    (slot-value $ 'sb-impl::external-symbols)
-    (slot-value $ 'sb-impl::cells)
-    (remove-if-not #'symbolp $)
-    (map 'list $(intern (symbol-name $)
-                        (find-package :keyword))
-         $)))
+       (slot-value $ 'sb-impl::external-symbols)
+       (slot-value $ 'sb-impl::cells)
+       (remove-if-not #'symbolp $)
+       (map 'list $(intern (symbol-name $)
+                           (find-package :keyword))
+            $)))
 
 (defpackage :fn
   (:use :fn-impl :common-lisp)

@@ -186,36 +186,8 @@
    First off, let's not kid ourselves: DEFPARAMETER is too long of a name.
    DEFVAR is not so bad, but usually we want DEFPARAMETER behavior, rather than
    DEFVAR behavior.
-
-   We could use the names DEF, DEF-ONCE, VAR, SET, or :=. VAR and SET run into
-   the issue that they clobber Common Lisp primitives.
-
-   #+BEGIN_SRC common-lisp
-   ;; Variable definitions-- CL now
-   (defparameter x 6)
-   ;; alternatives
-   (def x 6)
-   (set x 6)
-   (var x 6)
-   (:= x 6)
-
-   ;; Constant definitions
-   (defconstant pi 3.14)
-   (defconst pi 3.14)
-   (const pi 3.14)
-
-   ;; top level function definitions
-   (defun f (x)
-     body)
-   (defn f (x)
-     body)
-   (function f (x)
-     body)
-   (def f (x)
-     body)
-   #+END_SRC
-
-   Currently, we're going to use DEF for declarations, SET for updates, CONST
+   
+   Currently, I've decided to use DEF for declarations, SET for updates, CONST
    for constants, and DEFN for functions.
 
    #+BEGIN_SRC common-lisp
@@ -264,44 +236,92 @@
    - :arg-doc LIST :: argument documentation (only in definitions)
 
 
-** Should this be a LISP-2?
+** RADICAL: Immediate type syntax (Forget about QUOTE)
 
-   It's really nice to have a separate namespace for operators and for
-   variables. Of course a single namespace isn't so bad if you have lexical
-   scope instead of dynamic scope, although it can cause trouble for macros and
-   it is further complicated by the requirement to declare local variables
-   globally. We might want rethink that.
+   *BIG note:* quote is useful within quasiquote, as we can write e.g.
+   `(symbol-name ',x) to get a quoted version of a symbol within the quasiquote
+   body. Otherwise we must write `(symbol-name (quote ,x)), which could get
+   cumbersome quickly. Thus it's probably better not to touch this.
 
-   An alternative option is this: functions and variables share a namespace,
-   HOWEVER, the default scope for operators is global. Local functions could
-   still screw us on macroexpansion though.
+   Here we will explore syntax for immediate types. First, we will enumerate the
+   essential types and their syntax in plain ol' CL
 
-   The big issue is always macros. In a LISP-2, unless some extremely misguided
-   individual is defining function names that clobber global functions used by
-   macros, then all is good. However, in a LISP-1, all variable names are thrown
-   into the mix, which complicates things.
+   - symbol :: 'sym or `sym
+   - keyword :: :key
+   - integer (base 10) :: 101
+   - integer (base 16) :: #xb00b5
+   - integer (octal) :: #o777
+   - character :: #\c
+   - float :: -1.237, 1.2938e9, etc
+   - string :: "str"
+   - bool :: T or NIL
 
-   One option that I like very much is to change the way we do package
-   resolution for symbols. Here's what I'd propose: normally, the reader will
-   place all symbols that do not have an explicit package in a special package
-   named LOCAL. LOCAL is a special package for lexically-bound variables. The
-   special thing about it is that it will fail over to the package in which the
-   code was defined if a symbol is unbound. This will have to be worked out
-   during compilation. However, the quote and quasiquote operators will read
-   symbols using the current package. The interface would look something like
-   this:
+   I would like it if we could do 0x2a for hexadecimal and 0o755 for octal.
 
-   #+BEGIN_SRC common-lisp
-   (def read ((stream stdin) (package :local))
-     (dispatch-on-stream stream))
-   #+END_SRC
+   In addition, it would be possible, I think, to get rid of single quote for
+   variables and simply use the backtick everywhere instead. Then, single quotes
+   could be used for strings or characters, but this would really fuck with
+   paredit so maybe it's a distant future sort of change. However, doing so
+   would also let us reclaim the # character.
 
-   Then you avoid the issue of user code clobbering necessary macro functions,
-   and it's completely painless to do variable capture-- all you need to do is
-   write local::unhygienic-thing and you're good to go! You will still need
-   gensyms, though.
 
-   We will meditate on this further in the future.
+** Is this be a LISP-2?
+
+   No. Well, it's not supposed to be. At the moment, there are still,
+   unfortunately, relics of Common Lisp's silly old variable system. There's no
+   easy way to declare global lexical variables, so we do our best.
+
+
+*** Rationale
+
+
+*** Implementation of Lexical Scope
+
+    It's a lot of work to fake global lexical scope in Common Lisp, and the lack
+    thereof is the single biggest problem I have with language. So, we do
+    something a little whacky. We will override the left paren reader as
+    described in the other Implementation section. This gives us the ability to
+    have any expression in the operator position of a compound expresion. That's
+    a good start.
+
+    Whenever we define a global (non-dynamic) variable, we do a few things. We
+    will also create a symbol macro with the same name that expands to
+    (LEXICAL-VALUE 'SYMBOL). LEXICAL-VALUE itself is a magic macro that determines
+    whether the variable is bound locally, and, if it is, expands to that
+    symbol. Otherwise, it expands to get the LEXICAL-BINDING field from a
+    symbol, which is where we put lexically bound variables.
+
+    In addition to the LEXICAL-BINDING field of the symbol, we also set the
+    function field for the symbol when the field is a function. This requires us
+    to be very careful with how we mutate variables. That is, we must carefully
+    set and unset the function field of a symbol when we change its value.
+    Moreover, we have to be careful
+
+
+*** Implementation 1
+
+    A partial implementation is actually quite straightforward to implement in
+    Common Lisp, but it involves changing the behavior of the reader macro for
+    the left paren, which feels very dirty. I like it.
+
+    Dumb jokes aside, the implementation would be easy and involve two steps.
+    First of all, we would make DEF and DEFN assign both the variable and the
+    function slots of a symbol. Then we redefine the left paren. The new reader
+    would simply invoke the old one, check if the first item in the list is a
+    symbol, and if it isn't, then expand it to a FN-FUNCALL form. FN-FUNCALL
+    behaves like FUNCALL, except that it is also a compiler macro which will
+    strip out CELL-VALUE calls (see the other implementation section), thereby
+    eliminating the middle-man in 
+
+    One problem we would run into is that code pulled in from other common lisp
+    packages would not have its functions in the variable space, so we would
+    still need to use the pointy #'FUN syntax for those guys. Provided there are
+    no collisions in the exported symbols in function/variable space, it would
+    be possible to automatically convert LISP-2 code to FN, but it probably
+    isn't worth the trouble.
+
+
+** Local definitions
 
 
 * Immediate future
