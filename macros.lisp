@@ -14,7 +14,7 @@
 
 (defun flatten (tree)
   "Turn a tree into a list of its leaves. Returns a list even if the tree is an
-atom, e.g. (flatten 'a) -> (A)."
+ atom, e.g. (flatten 'a) -> (A)."
   (cond ((listp tree) (mapcan #'flatten tree))
         #+sbcl
         ((sb-impl::comma-p tree) (flatten (sb-impl::comma-expr tree)))
@@ -41,13 +41,13 @@ atom, e.g. (flatten 'a) -> (A)."
 
 (defun macroexpand-all (tree)
   "Recursively macroexpand a form before evaluation. This changes macro
-semantics slightly, (particularly involving special forms like DECLARE), but
-we're lighting fires here anyway."
+ semantics slightly, (particularly involving special forms like DECLARE), but
+ we're lighting fires here anyway."
   (if (listp tree)
-      (let ((tree* (macroexpand tree)))
+      (let ((tree0 (macroexpand tree)))
         (if (listp tree)
-            (cons (car tree*)
-                  (mapcar #'macroexpand-all (cdr tree*)))
+            (cons (car tree0)
+                  (mapcar #'macroexpand-all (cdr tree0)))
             tree))
       tree))
 
@@ -56,6 +56,12 @@ we're lighting fires here anyway."
   (and (listp expr)
        (eq (car expr) 'quote)
        (= (length expr) 2)))
+
+(defun take-while (test lst)
+  "Take entries from lst until test returns false."
+  (loop for x in lst
+     while (funcall test x)
+     collect x))
 
 ;;;;;;
 ;;; Dollar-sign reader macro
@@ -183,8 +189,8 @@ forms, and nested $() forms are discarded, but no non-trivial code walking is
 done other than that. Thus, you should avoid using variables with $-arg names in
 the function body, as it could mess up the argument list.
   The ->$ macro can safely be used within $() because the $ symbol is eliminated
-from all of the arguments except the first during macroexpansion. More exotic
-macros may have their behavior broken by the messed up macroexpansion order.
+from the body during macroexpansion. More exotic macros may have their behavior
+broken by the messed up macroexpansion order.
 "
   (let ((*readtable* (copy-readtable)))
     (let ((c (peek-char nil stream nil)))
@@ -200,7 +206,8 @@ macros may have their behavior broken by the messed up macroexpansion order.
 ;;;; M A K E I T S O
 ;; ^^ I don't like star trek, but I like that quote and it's actually a historic
 ;; British navy phrase so they didn't even invent it.
-(set-macro-character #\$ #'$-reader t)
+(eval-when (:load-toplevel)
+  (set-macro-character #\$ #'$-reader t))
 
 ;;; BIGFIXME: fuck I forgot but i pretty sure it's in the reader function
 
@@ -209,28 +216,49 @@ macros may have their behavior broken by the messed up macroexpansion order.
 ;;; threading/pipeline macros
 ;;;;;;
 
+;;; Note: These look much nicer using $() syntax
+
 (defmacro -> (form &body lists)
-  (reduce $`(,(car $1) ,$0 ,@(cdr $1))
-          (mapcar $(if (symbolp $) (list $) $)
+  (reduce (lambda (inner outer)
+            `(,(car outer) ,inner ,@(cdr outer)))
+          ;; Wrap individual symbols in lists so we can provide operator names
+          ;; to our pipelines. E.g. log -> (log).
+          ;; FIXME: this behavior is weird. Maybe get rid of it?
+          (mapcar (lambda (x)
+                    (if (symbolp x)
+                        (list x)
+                        x))
                   lists)
           :initial-value form))
 
 (defmacro ->> (form &body lists)
-  (reduce $(append $1 (list $0))
-          (mapcar $(if (symbolp $) (list $) $)
+  (reduce (lambda (inner outer)
+            (append outer (list inner)))
+          (mapcar (lambda (x)
+                    (if (symbolp x)
+                        (list x)
+                        x))
                   lists)
           :initial-value form))
 
 (defmacro ->$ (form &body lists)
-  (reduce $(substitute-if $0 $(and (symbolp $) (name-eq $ '$)) $1)
-          (mapcar $(if (symbolp $) (list $) $)
-                  lists)
+  (reduce (lambda (inner outer)
+            (substitute-if
+             outer
+             (lambda (x)
+               (and (symbolp x)
+                    (name-eq x '$)))
+             inner))
+          lists
           :initial-value form))
 
 (defmacro as-> (form var &body lists)
-  (reduce $(substitute-if $0 $(eq $ var) $1)
-          (mapcar $(if (symbolp $) (list $) $)
-                  lists)
+  (reduce (lambda (inner outer)
+            (substitute-if
+             outer
+             (lambda (x) (eq x var))
+             inner))
+          lists
           :initial-value form))
 
 
@@ -265,6 +293,8 @@ read as (list args)."
        (set-macro-character ,open #',opener)
        (set-macro-character ,close #',closer))))
 
-(set-del-reader #\[ #\] 'list)
-;;(set-del-reader #\{ #\} 'new)
+(eval-when (:load-toplevel)
+  (set-del-reader #\[ #\] 'list))
+(eval-when (:load-toplevel)
+  (set-del-reader #\{ #\} 'dict))
 

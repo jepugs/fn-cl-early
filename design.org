@@ -24,23 +24,40 @@
 
 * Schemas and Patterns
 
-  A schema describes an algebraic data type. They are used in pattern matching and
-  by the new keyword.
+  Schemas describe the shape of data.
 
   #+BEGIN_SRC common-lisp
-  (defschema NAME &REST FIELDS) ; => nil
+  (defdata NAME &REST SLOT) ; => (defines a data schema)
 
-  (new NAME &REST FIELD-VALUES) ; => instance of NAME
+  (new NAME &REST SLOT-VALUES) ; => instance of NAME
 
-  (@ INSTANCE FIELD) ; => value of FIELD in INSTANCE
+  (@ INSTANCE SLOT) ; => value of FIELD in INSTANCE
 
   (match OBJ
-    (NAME &REST VARS)
+    (NAME &REST PATTERN-ARGS)
       EXPR
     ...)
   ;; => if OBJ matches the schema, bind the field values to VARS and execute 
   ;;    EXPR
   #+END_SRC
+
+
+** What is a schema?
+
+   Schemas are an abstract way to think about data structures. Every schema
+   somehow defines the following facilities:
+
+   - a constructor, which is invoked by the NEW keyword and builds an instance
+     of the given schema
+   - accessors (getters & setters) for the slots (if any) contained in the
+     schema
+   - pattern matching for objects fitting this schema
+
+   Every schema doesn't necessarily need to implement all of these facilities--
+   for instance, we have pattern-schemas which raise an error if you attempt to
+   construct an instance of them, and data-schemas are immutable by default and
+   raise an error if you try to use a setter. (Note: we might want to provide
+   force-set! to ignore these errors).
 
 
 ** Advanced Schemas
@@ -65,6 +82,87 @@
                object
    - destruct :: a function (f PATTERN-ARGS OBJ) that returns a bindings object
                  or NIL
+
+
+** Rethinking data schemas: Addressing and inheritance
+
+   We think of objects as being labelled boxes which may contain other objects.
+   To take objects out of box, we need some sort of addressing scheme. The
+   current approach uses named positional arguments to do this. This gives us
+   two ways to take values out of the box:
+
+   - using match with positional arguments, i.e. (match x (pair a _) a) would
+     bind a to the first field of our hypothetical pair object.
+   - using @ with the name of an argument. Suppose we name the fields of pair
+     left and right. Then we can get the variable above using (@ 'left 
+
+   The current implementation of general-schema is perfect, because it gives us
+   control over the arguments for the constructor, the fields accepted by the
+   accessors, and the pattern matching independently. What we need to rethink is
+   the implementation for normal schemas (which we will refer to as data schemas
+   from now on).
+
+   First of all, given the flexibility of general-schema, we don't have to worry
+   about covering all possible edge cases for data schemas. We can, for
+   instance, say that all fields are addressable by keywords, which means that
+   no two symbols in the field list can have the same name (even if they're in
+   different packages). In fact, this gives us the very cool opportunity to do
+   something like this: (:key obj) === (@ key obj). Since keywords can't have
+   values bound to them, we might as well let them function as accessors.
+
+   So far we haven't changed anything that matters to pattern matching. The
+   problem, however, comes in when we have data schemas with many fields. e.g.
+
+   #+BEGIN_SRC common-lisp
+   (defdata contact
+     whole-name
+     family-name
+     preferred-name
+     aliases
+     birthdate
+     height
+     weight
+     eye-color
+     hair-color
+     nationality)
+   #+END_SRC
+
+   Suppose we want to match people whose eye-color is :blue. Then we would have
+   to do something like
+
+   #+BEGIN_SRC common-lisp
+   (match peep
+     (contact _ _ _ _ _ _ _ :blue _ _) (do-something peep))
+   #+END_SRC
+
+   What a pain in the ass. So, we'll definitely want something like this
+   instead:
+
+   #+BEGIN_SRC common-lisp
+   (match peep
+     (contact :eye-color :blue) (do-something peep))
+   #+END_SRC
+
+   This takes advantage of the fact schemas (and consequently patterns) can't
+   have keywords as names.
+
+   Unfortunately, using the syntax above, we can't have it both ways.
+
+
+** types of schemas
+
+   We have general-schemas, which give you independent control of construction,
+   accessors, and pattern matching (to allow users to define them in software,
+   they will also need to be able to specify one or more private fields that
+   contain the data). We have data-schemas, which are a record type. We will
+   also introduce pattern-schemas, which are patterns.
+
+
+** pattern schemas
+
+   - (satisfies FUNCTION) which is true if (FUNCTION x) is
+   true, x is the object
+   - (type TYPE) is true if (is-subtype (type-of x) TYPE) is true
 
 
 * New lambda lists
@@ -160,6 +258,68 @@
 
   This is where I'm gonna put some wild ideas that I'm not sure about.
 
+** schemas with custom internal data structures
+
+   eee
+
+   
+** protocols (polymorphism)
+
+   I really like how protocols work in SML/how type classes work in Haskell.
+   However, these implementations are indelibly tied to the static type system.
+   Here's an example: suppose we wanted to define a sequence type class in
+   Haskell. We want our sequence types to satisfy two requirements: we can
+   create an iterator from any sequence, and we can get an empty version of that
+   sequence. We can define our iterator and sequence typeclasses like so
+
+   #+BEGIN_SRC haskell
+   class Iterator a where
+       hasNext :: a -> Bool
+       iterNext :: a -> a
+       iterGet :: a -> b
+
+   class Sequence a where
+       empty :: a
+       iterator :: Iterator b => a -> b
+       conc :: a -> a -> a
+
+   -- example instance
+   data ListIt = ListIt lst
+   instance Iterator ListIt where
+     hasNext (ListIt lst) = lst == []
+     iterNext (ListIt lst) = ListIt (tail lst)
+     iterGet (ListIt lst) = head lst
+
+   instance Sequence [a] where
+     empty = []
+     iterator x = ListIt x
+     conc x y = x ++ y
+
+   #+END_SRC
+
+   Don't try running this code. I haven't written Haskell in a while. Even so,
+   this example is instructive, as it reveals some of the key features of an
+   effective ADT protocol system.
+
+   It is immediately clear that we want two new special forms to implement
+   protocols. We will define protocols with defproto, and create implementations
+   with defimpl. In addition, we will need to define some sort of symbol which
+   corresponds to the designated type (in the Haskell example, it's the variable
+   a).
+
+   Also, we can see that the empty method is not a function. Rather, it works
+   like a variable, with the type system doing the heavy lifting-- in Haskell's
+   case, the compiler decides which version of empty to use based on the type
+   expected in the code. Haskell is pretty cool.
+
+   To emulate this behavior in FN, we would like a way to define a function
+   (empty TYPE) which takes the type name as a symbol. E.g. (empty 'list) =>
+   NIL. In addition, we will need a way to specify methods that accept arguments
+   of the given type.
+
+   I have a solution which I believe kills two birds with one stone.
+
+ 
 ** matching in lambda lists (actually this feature sucks)
 
    In Common Lisp, we have these &-symbols for special arguments:

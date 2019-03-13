@@ -1,12 +1,13 @@
 (in-package :fn-impl)
 
+
+;; TODO: use a hash table instead of an alist
 (defclass bindings ()
   ((alist :initarg :alist
           :initform (list)
           :type list
           :accessor bindings-alist
           :documentation "An ALIST of symbols and values."))
-
   (:documentation "An object representing a set of variable bindings."))
 
 (defun bindings-conc (b1 &rest b2)
@@ -18,10 +19,11 @@
       b1))
 
 (defun bindings-assignment (bindings vars)
+  "Create a list of SETQ forms assigning the variables named in VARS to the
+corresponding values in BINDINGS."
   (mapcar (lambda (x)
             `(setq ,x (cdr (assoc ',x (bindings-alist ,bindings)))))
           vars))
-
 
 (defun is-quoted (pattern)
   "Tell if pattern is a quoted form."
@@ -46,6 +48,8 @@
           nil)))
 
 (defun pattern-match (pattern obj)
+  "Perform pattern matching and return either NIL (no match) or a bindings
+object."
   (cond ((eq pattern '_)                ; wildcard
          (make-instance 'bindings))
         ((and (symbolp pattern) (not (keywordp pattern))) ; variable
@@ -63,9 +67,9 @@
         (t (warn "Unknown pattern ~a" pattern)
            nil)))
 
-;;; FIXME: this would not work with general schemas. In the future, we will need
-;;; another schema method that gives the names of the fields bound by that
-;;; schema.
+;;; FIXME: this would not necessarily work with general schemas. In the future,
+;;; the best solution would probably be another schema method that gives the
+;;; names of the fields bound by that schema.
 (defun pattern-vars (pattern)
   "Makes a list of all variables that a pattern would bind."
   (cond ((eq pattern '_) nil)
@@ -74,11 +78,18 @@
               (not (eq pattern '&)))
          (list pattern))
         ((is-literal pattern) nil)
-        ((listp pattern)
+        ((and (listp pattern) (symbolp (car pattern))) ;schema pattern
+         (aif (gethash (car pattern))
+              (mapcan #'pattern-vars (schema-pattern-vars it pattern))
+              (error "pattern-vars: schema not found" (car pattern)))
+         ;; this is where the new schema code should go
          (mapcan #'pattern-vars (cdr pattern)))
         (t nil)))
 
-(defmacro match (obj &body patterns-and-clauses)
+(defmacro match (obj &body clauses)
+  "Perform pattern matching on OBJ. Each clause is a pattern and expression
+pair. Patterns are tested in the order specified until the first match is found,
+at which point the expression of the clause is executed."
   (let ((obj-var (gensym)))
     `(let ((,obj-var ,obj))
        (or ,@(mapcar (lambda (x)
@@ -89,5 +100,5 @@
                                 (let ,vars
                                   ,@(bindings-assignment b vars)
                                   ,(cadr x))))))
-                     (group 2 patterns-and-clauses))))))
+                     (group 2 clauses))))))
 
