@@ -13,8 +13,14 @@
 ;;; must unbind the symbol.
 ;;;
 ;;; The final step in defining a lexical variable is to create a symbol macro
-;;; with that name that expands to (get SYM 'lexically-bound). This works
-;;; because local lexical variables (i.e. ones created by let, lambda, etc) will shadow 
+;;; with that name that expands to (lexical-value SYM). This works because local
+;;; lexical variables (i.e. ones created by let, lambda, etc) will shadow the
+;;; symbol macro, giving us appropriate lexical scope.
+;;;
+;;; In order to manage variables vs constants, we also attach a boolean called
+;;; 'mutable to the associated variable. In our SETF function, we check this
+;;; flag and raise an error if appropriate. Every variable defined with DEF is
+;;; immutable, while variables defined with MY-DEFVAR are mutable.
 
 
 (defun is-mutable (sym)
@@ -33,6 +39,22 @@
   "Get the form used to initialize the value of sym"
   (get sym 'initform))
 
+(defun lexical-value (sym)
+  "Get the (global) lexical value of sym"
+  (get sym 'lexical-binding))
+
+(defun (setf lexical-value) (val sym)
+  (cond
+    ((not (is-lexical sym))
+     (error "Attempt to set unbound global lexical symbol ~a" sym))
+    ((not (is-mutable sym))
+     (error "Attempt to set the immutable variable ~a" sym))
+    (t
+     (setf (get sym 'lexical-binding) val)
+     (if (functionp val)
+             (setf (symbol-function sym) val)
+             (fmakunbound sym)))))
+
 (defmacro define-lexically (sym val mutable)
   ;; Raise a warning if we redefine a variable with a different initform
   (if (and (is-lexical sym)
@@ -49,16 +71,16 @@
        (let ((,gval ,val))
          (setf (get ',sym 'lexical-binding) ,gval)
          (setf (get ',sym 'lexically-bound) t)
-         (setf (get ',sym 'initform) mutable)
-         (setf (get ',sym 'mutable) mutable)
+         (setf (get ',sym 'initform) ',val)
+         (setf (get ',sym 'mutable) ,mutable)
          (when (functionp ,gval)
            (setf (symbol-function ',sym) ,gval))
-         (define-symbol-macro ,sym (get ',sym 'lexical-binding))))))
+         (define-symbol-macro ,sym (lexical-value ',sym))))))
 
 (defun set-variable (sym val)
   "Update the value of a variable."
   (cond ((is-lexical sym)
-         (Unless (is-mutable sym)
+         (unless (is-mutable sym)
            (error "set: ~a is immutable" sym))
          (setf (get sym 'lexical-binding) val)
          (if (functionp val)
@@ -66,6 +88,7 @@
              (fmakunbound sym)))
         (t (set sym val))))
 
+;;; TODO: Add pattern destructuring to def
 (defmacro def (&body pattern-value-pairs)
   "Define a lexical constant."
   (let* ((pairs (group 2 pattern-value-pairs)))
@@ -80,4 +103,12 @@
                        pairs))))
 
 (defmacro defn (name arg-list &body body)
+  "Define a function."
   `(def ,name (fn ,arg-list . ,body)))
+
+
+
+(defmacro set! (name value)
+  "Update the value of a named variable"
+  ;; For now, this is all we need
+  `(setf ,name ,value))
