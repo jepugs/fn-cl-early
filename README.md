@@ -8,5 +8,7 @@ interface.
 No effort has been made to make this code readable to other people, in case the
 fact that I'm using Common Lisp wasn't a giveaway. No effort has been or will be
 made to implement features or libraries that I, the despot, do not personally
-desire. That said, feel free to use the code as you want, as long as you abide
-the GPLv3 license.
+desire. No effort has been made to make this code portable. It works on with
+SBCL on my computers and possibly nowhere else because I'm not about to test it.
+I do not plan on accepting any commits from anyone else. That said, feel free to
+use the code as you want, as long as you abide the GPLv3 license.
