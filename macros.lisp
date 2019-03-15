@@ -57,11 +57,60 @@
        (eq (car expr) 'quote)
        (= (length expr) 2)))
 
+(defmacro rlambda (llist init-list &body body)
+  "Creates a recursive lambda form and calls it with init-list"
+  `(labels ((recur ,llist
+              ,@body))
+     (recur ,@init-list)))
+
+(defun take (n lst)
+  "Take the first n entries from a list"
+  (loop for x in lst
+     for i from 1 to n
+     collect x))
+
+(defun drop (n lst)
+  (if (zerop n)
+      lst
+      (drop (- n 1) (cdr lst))))
+
 (defun take-while (test lst)
   "Take entries from lst until test returns false."
   (loop for x in lst
      while (funcall test x)
      collect x))
+
+(defun split-if (test lst)
+  "Split a list at the first element that satisfies test. Returns [left right]."
+  (rlambda (rleft right) (nil lst)
+
+    ;; ;; this is what this function could look like in fn <3
+    ;; (case right
+    ;;   [(satisfies _ test) & _]          ;=>
+    ;;     [(nreverse rleft) right]
+    ;;   [a & b]                           ;=>
+    ;;     (recur (cons a rleft) b)
+    ;;   []                                ;=>
+    ;;     [(nreverse rleft) right])
+
+    (cond ((null right)
+           (list (nreverse rleft) right))
+          ((funcall test (car right))
+           (list (nreverse rleft) right))
+          (t
+           (recur (cons (car right) rleft) (cdr right))))))
+
+(defun interleave (&rest lst*)
+  (rlambda (res l*) (() lst*)
+    ;; FIXME: this could be made more efficient by using a vector for l* and
+    ;; keeping track of the index mod (length l*) instead of rotating the list
+    ;; with each recursive call
+    (cond ((null l*) (nreverse res))
+          ;; remove empty lists
+          ((null (car l*)) (recur res (cdr l*)))
+          ;; add non-empty element and cycle l*
+          (t (recur (cons (caar l*) res) (append (cdr l*) (list (cdar l*))))))))
+
 
 ;;;;;;
 ;;; Dollar-sign reader macro

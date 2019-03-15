@@ -28,6 +28,17 @@
         val
         (error "dict-get: can't find key in dict: ~a" key))))
 
+(defun (setf dict-get) (val d key)
+  "Set a value in a dict."
+  (setf (gethash key d) val))
+
+(defun dict-conj (dict key value)
+  (let ((res (copy-structure dict)))
+    (setf (dict-get res key) value)
+    res))
+
+
+
 (defun dict-extend (dict0 &rest dicts)
   "Extend dict1 with the keys contained in dicts. This operation is purely
  functional. dict1 is extended one dictionary at a time from left to right in
@@ -41,6 +52,13 @@
       dict0))
 
 (deftype dict () 'hash-table)
+
+(defmethod print-object ((object hash-table) stream)
+  (write-char #\{ stream)
+  (maphash (lambda (k v)
+             (format stream "~s ~s " k v))
+           object)
+  (write-char #\} stream))
 
 ;; (defclass fn-stream ()
 ;;   ())

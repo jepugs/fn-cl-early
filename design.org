@@ -182,35 +182,28 @@
  
   For now, we're going to completely nix &whole and &body. We will replace &rest
   directly with the symbol & (the ampersand by itself, like in Clojure). We
-  replace &optional and &key with parenthesized forms as seen in the example
-  below.
+  replace &optional with parenthesized forms as seen in the example below and we
+  expand keywords to a more intuitive syntax.
 
   #+BEGIN_SRC common-lisp
   (defun operator (operand0 &rest operands) ...)
   ;; => (in FN)
-  (defun operator (operand0 & operands) ...)
+  (defn operator (operand0 & operands) ...)
 
   (defun log (x &optional (base 10)) ...)
   ;; => lists starting w/ non-keyword symbols replace &optional
-  (defun log (x (base 10)) ...)
+  (defn log (x (base 10)) ...)
 
   (defun sort (seq &key (test #'< test-p) (ascending t)) ...)
   ;; => lists starting with keywords replace &key
-  (defun sort (seq (:test #'< test-p) (:ascending t)) ...)
+  (defn sort (seq :test (test #'<) :ascending (ascending t)) ...)
   #+END_SRC
 
   *Rationale:* I personally think argument lists in Common Lisp are too verbose
   and rather ugly because of it. By cutting out all of the &-symbols (except the
   rather intuitive & itself), the argument lists are shorter if nothing else. As
-  a matter of taste, it also seems more LISP-y.
-
-  *Key arg packages: a semantic gotcha:* In CL it is generally legal to use
-  variables in an external package as function arguments. Our implementation of
-  keyword arguments means that keyword symbol names will always appear in the
-  package (sane-package). Since gensyms have null packages, this means that it
-  is, for now, impossible to use them as names for keyword arguments. Of course,
-  gensyms are generally useless as keyword arguments anyway, so this shouldn't
-  matter.
+  a matter of taste, it also seems more LISP-y. In addition, I like the way that
+  the keyword syntax in the arg lists mirrors the syntax used in function calls.
 
 
 * TODO:
@@ -486,3 +479,6 @@
 
 * Immediate future
 
+* Why?
+
+  The layman 
