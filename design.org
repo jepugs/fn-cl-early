@@ -4,8 +4,9 @@
     is SBCL. No particular effort is made to maintain ANSI compliance, although
     most of the code is ANSI anyway.
   - Most of the code is in the FN-IMPL package. This package makes use of some
-    features of FN (for instance, the $ reader macro), but we avoid shadowing
-    any variables from the CL package.
+    features of FN (for instance, the $ reader macro), but we avoid global
+    lexical variables, the fn macro, and any functionality that would shadow
+    symbols in the CL package.
   - The FN package is a drop-in replacement for the CL package that turns common
     lisp into FN.
   - There will be a standard library one day. It will initially be implemented
@@ -24,166 +25,113 @@
 
 * Schemas and Patterns
 
-  Schemas describe the shape of data.
+  A *schema* is the data structure that describes a data type.
+
+  New data types in FN are usually defined with the defdata operator. Presently
+  the defdata operator takes two arguments: a name and an arg list. The arg list
+  follows the same syntax as FN arg lists, see the section New Lambda Lists for
+  details. This arg list is the argument list for the constructor function,
+  which is invoked by (new DATATYPE ARG ...).
 
   #+BEGIN_SRC common-lisp
-  (defdata NAME &REST SLOT) ; => (defines a data schema)
+    (defdata NAME ARG-LIST) ;=> (defines a data schema)
 
-  (new NAME &REST SLOT-VALUES) ; => instance of NAME
+    (new NAME ARGS) ;=> makes an instance of NAME
 
-  (@ INSTANCE SLOT) ; => value of FIELD in INSTANCE
+    (@ SLOT INSTANCE) ;=> value from SLOT in INSTANCE
 
-  (match OBJ
-    (NAME &REST PATTERN-ARGS)
-      EXPR
-    ...)
-  ;; => if OBJ matches the schema, bind the field values to VARS and execute 
-  ;;    EXPR
+    (case OBJ
+      (NAME PATTERN-ARG*)
+        EXPR
+      ...)
+    ;; => if OBJ matches the schema, bind the field values to the pattern-args
+    ;;    and execute EXPR
   #+END_SRC
 
+  Data classes defined with defdata can be thought of as structs from C. That
+  is to say, they are nothing but boxes of named values. The names, which are
+  called slots, are the variable names from the arg list.
 
-** What is a schema?
+  #+BEGIN_SRC common-lisp
+    (defdata Pair left right) ;=> defines the Pair schema
 
-   Schemas are an abstract way to think about data structures. Every schema
-   somehow defines the following facilities:
+    (def my-pair (new Pair 1 2)) ;=> make a Pair
 
-   - a constructor, which is invoked by the NEW keyword and builds an instance
-     of the given schema
-   - accessors (getters & setters) for the slots (if any) contained in the
-     schema
-   - pattern matching for objects fitting this schema
+    (@ 'left my-pair) ;=> value from SLOT in INSTANCE
 
-   Every schema doesn't necessarily need to implement all of these facilities--
-   for instance, we have pattern-schemas which raise an error if you attempt to
-   construct an instance of them, and data-schemas are immutable by default and
-   raise an error if you try to use a setter. (Note: we might want to provide
-   force-set! to ignore these errors).
+    (setf (@ 'right my-pair) 3) ;=> set right to 3
+
+    (case my-pair
+      (pair 0 x) (format t "0 and ~s" x)    ;not called (pattern doesn't match)
+      (pair 1 x) (format t "1 and ~s" x))   ;will be called
+    ;; 1 and 3
+    ;;=> NIL
+  #+END_SRC  
+
+
+** What's in a schema?
+
+   As you can see from above examples, schemas provide interfaces to do four
+   things:
+
+   - construct new instances of the associated type
+   - access slots for such instances
+   - set the values of slots
+   - perform pattern matching
+
+   A great deal of care is taken to make sure that the interfaces are very clear
+   across all four of these.
 
 
 ** Advanced Schemas
 
-   Schemas are implemented in such a way that construction, access, and
-   destructuring (i.e. pattern matching) can all be handled independently by
-   general functions. This isn't especially useful in general, but it allows
-   definition of special behaviors i.e. for dicts and linked lists.
-
-
-** Schema Implementation
-
-   Schemas are implemented via the schema class. Pertinent slots are:
-
-   - name :: a symbol representing the name of the schema. This is used to
-             identify it in constructors, accessors, and patterns and it *must*
-             be unique in the schema table
-   - data-class :: the class associated with the schema. This is used to
-                   match schemas to instance objects, so it must be unique.
-   - construct :: a function (f ARGS) that returns an instance of this Schema
-   - access :: a function (f INSTANCE FIELD-NAME) that gets fields from the
-               object
-   - destruct :: a function (f PATTERN-ARGS OBJ) that returns a bindings object
-                 or NIL
-
-
-** Rethinking data schemas: Addressing and inheritance
-
-   We think of objects as being labelled boxes which may contain other objects.
-   To take objects out of box, we need some sort of addressing scheme. The
-   current approach uses named positional arguments to do this. This gives us
-   two ways to take values out of the box:
-
-   - using match with positional arguments, i.e. (match x (pair a _) a) would
-     bind a to the first field of our hypothetical pair object.
-   - using @ with the name of an argument. Suppose we name the fields of pair
-     left and right. Then we can get the variable above using (@ 'left 
-
-   The current implementation of general-schema is perfect, because it gives us
-   control over the arguments for the constructor, the fields accepted by the
-   accessors, and the pattern matching independently. What we need to rethink is
-   the implementation for normal schemas (which we will refer to as data schemas
-   from now on).
-
-   First of all, given the flexibility of general-schema, we don't have to worry
-   about covering all possible edge cases for data schemas. We can, for
-   instance, say that all fields are addressable by keywords, which means that
-   no two symbols in the field list can have the same name (even if they're in
-   different packages). In fact, this gives us the very cool opportunity to do
-   something like this: (:key obj) === (@ key obj). Since keywords can't have
-   values bound to them, we might as well let them function as accessors.
-
-   So far we haven't changed anything that matters to pattern matching. The
-   problem, however, comes in when we have data schemas with many fields. e.g.
+   There are already two special schemas in fn: the list and dict schemas. On
+   the implementation side of things, these schemas have class general-schema
+   rather than the data-schema class used by defdata. Rather than relying on an
+   arg-list, general-schema instances contain general functions that accomplish
+   each task.
 
    #+BEGIN_SRC common-lisp
-   (defdata contact
-     whole-name
-     family-name
-     preferred-name
-     aliases
-     birthdate
-     height
-     weight
-     eye-color
-     hair-color
-     nationality)
+   (case [1 2 3]
+     [1 _] (print '_) ;no match (not enough args)
+     [1 1 x] (print x) ;no match (second arg mismatch)
+     [1 & x] (print x) ;match with rest arg-- prints [2 3]
+   )
+
+   (case {:a 'a :b "b"}
+     {:a 'b} (print 'b) ;no match (mismatch on :a)
+     {:b "b"} (print "b") ;match-- note how not all keys are needed
+   )
    #+END_SRC
-
-   Suppose we want to match people whose eye-color is :blue. Then we would have
-   to do something like
-
-   #+BEGIN_SRC common-lisp
-   (match peep
-     (contact _ _ _ _ _ _ _ :blue _ _) (do-something peep))
-   #+END_SRC
-
-   What a pain in the ass. So, we'll definitely want something like this
-   instead:
-
-   #+BEGIN_SRC common-lisp
-   (match peep
-     (contact :eye-color :blue) (do-something peep))
-   #+END_SRC
-
-   This takes advantage of the fact schemas (and consequently patterns) can't
-   have keywords as names.
-
-   Unfortunately, using the syntax above, we can't have it both ways.
-
-
-** types of schemas
-
-   We have general-schemas, which give you independent control of construction,
-   accessors, and pattern matching (to allow users to define them in software,
-   they will also need to be able to specify one or more private fields that
-   contain the data). We have data-schemas, which are a record type. We will
-   also introduce pattern-schemas, which are patterns.
-
-
-** pattern schemas
-
-   - (satisfies FUNCTION) which is true if (FUNCTION x) is
-   true, x is the object
-   - (type TYPE) is true if (is-subtype (type-of x) TYPE) is true
+  
+   At some point, we will want to make general-schema functionality available to
+   user programs. For now, we're not going to worry about it.
 
 
 * New lambda lists
 
-  Here's what we have in Common Lisp:
+  Common Lisp's syntax for argument lists is great because it's unambiguous,
+  easy to remember, and powerful. Common Lisp's syntax for argument lists is bad
+  because it's verbose, ugly (subjective), and does not run parallel to the
+  syntax for function calls.
+
+  The goal with FN's new lambda lists is to give the language a more coherent
+  interface than what we currently have in Common Lisp. That is, we would like
+  the syntax for argument lists to look more like actual function calls.
+
+  For starters, we simplify the types of arguments that we allow in FN. We now
+  only have optional, positional, keyword and rest arguments, with the
+  restriction that keyword and rest arguments can not be mixed in the same
+  argument list. Next, replace &REST with &. It says enough. Moreover, we forget
+  about &OPTIONAL and &KEY-- optional forms are now just lists, and keyword
+  forms are actual keywords. This is a taste of our new argument lists:
 
   #+BEGIN_SRC common-lisp
-  (defun func (POSITIONAL-ARGS SPECIAL-ARG*) ...)
+  (defn func (positional-arg (optional-arg "init") :keyword-arg (keyword-arg "key-init"))
+    (function-body))
   #+END_SRC
 
-  with
-
-  - POSITIONAL-ARGS ::= SYMBOL*
-  - SPECIAL-ARG ::= &rest SYMBOL | &whole SYMBOL | &body SYMBOL |
-                    &key OPT-ARG* | &optional OPT-ARG*
-  - OPT-ARG ::= SYMBOL | (SYMBOL VALUE)
- 
-  For now, we're going to completely nix &whole and &body. We will replace &rest
-  directly with the symbol & (the ampersand by itself, like in Clojure). We
-  replace &optional with parenthesized forms as seen in the example below and we
-  expand keywords to a more intuitive syntax.
+  And here are some translations from Common Lisp:
 
   #+BEGIN_SRC common-lisp
   (defun operator (operand0 &rest operands) ...)
@@ -191,34 +139,37 @@
   (defn operator (operand0 & operands) ...)
 
   (defun log (x &optional (base 10)) ...)
-  ;; => lists starting w/ non-keyword symbols replace &optional
+  ;; => lists replace &optional
   (defn log (x (base 10)) ...)
 
   (defun sort (seq &key (test #'< test-p) (ascending t)) ...)
-  ;; => lists starting with keywords replace &key
+  ;; => keyword arguments replace &key
   (defn sort (seq :test (test #'<) :ascending (ascending t)) ...)
   #+END_SRC
 
-  *Rationale:* I personally think argument lists in Common Lisp are too verbose
-  and rather ugly because of it. By cutting out all of the &-symbols (except the
-  rather intuitive & itself), the argument lists are shorter if nothing else. As
-  a matter of taste, it also seems more LISP-y. In addition, I like the way that
-  the keyword syntax in the arg lists mirrors the syntax used in function calls.
+  This also gives us the ability to define non-optional keyword arguments via
+  the syntax (:keyword-arg keyword-arg) (where the arg is a symbol, not a list).
+
+  #+BEGIN_SRC common-lisp
+  ;; define a function requiring a keyword argument
+  (defn func (:req-key req-key :opt-key (opt-key "default")) 
+    (function-body))
+
+  (func) ;=> error (needs req-key)
+  (func :req-key 6) ;=> okay (opt-key = "default")
+  (func :opt-key 9) ;=> error (needs req-key)
+  (func :req-key 6 :opt-key 9) ;=> okay
+  #+END_SRC
+
+  These non-optional keywords are especially useful when defining new data types
+  via defdata.
 
 
-* TODO:
+* Lexical scope
 
-  - implement dictionaries in dict.lisp
-  - make PATTERN-VARS smarter
-  - implement DEFN
-  - implement protocols
-  - set up syntax highlighting and indentation
-  - schema index sets
-  - add slices and iterators
-  - add lazy lists and teach fold, map, and filter about them
-  - add 
+  I implemented global lexical scope in Common Lisp so we can have it in fn.
 
-
+  
 * Misc functions/macros
 
   - defschema
@@ -313,27 +264,6 @@
    I have a solution which I believe kills two birds with one stone.
 
  
-** matching in lambda lists (actually this feature sucks)
-
-   In Common Lisp, we have these &-symbols for special arguments:
-
-   #+BEGIN_SRC common-lisp
-   (defun f (&optional fuck-me-sideways) ...)
-   #+END_SRC
-
-   But, we could also have these things:
-
-   #+BEGIN_SRC common-lisp
-   (defun f (&match [x y z]) ...)
-   #+END_SRC
-
-   which would do pattern-based destructuring on the argument.
-
-   One problem is that we've nixed &-symbols in our version of defun, so we have
-   parenthesized forms for variable names and keywords. Even then, it would be
-   cumbersome to type &match before every pattern argument.
-
-
 ** unified definition
 
    First off, let's not kid ourselves: DEFPARAMETER is too long of a name.
@@ -389,96 +319,9 @@
    - :arg-doc LIST :: argument documentation (only in definitions)
 
 
-** RADICAL: Immediate type syntax (Forget about QUOTE)
-
-   *BIG note:* quote is useful within quasiquote, as we can write e.g.
-   `(symbol-name ',x) to get a quoted version of a symbol within the quasiquote
-   body. Otherwise we must write `(symbol-name (quote ,x)), which could get
-   cumbersome quickly. Thus it's probably better not to touch this.
-
-   Here we will explore syntax for immediate types. First, we will enumerate the
-   essential types and their syntax in plain ol' CL
-
-   - symbol :: 'sym or `sym
-   - keyword :: :key
-   - integer (base 10) :: 101
-   - integer (base 16) :: #xb00b5
-   - integer (octal) :: #o777
-   - character :: #\c
-   - float :: -1.237, 1.2938e9, etc
-   - string :: "str"
-   - bool :: T or NIL
-
-   I would like it if we could do 0x2a for hexadecimal and 0o755 for octal.
-
-   In addition, it would be possible, I think, to get rid of single quote for
-   variables and simply use the backtick everywhere instead. Then, single quotes
-   could be used for strings or characters, but this would really fuck with
-   paredit so maybe it's a distant future sort of change. However, doing so
-   would also let us reclaim the # character.
-
-
-** Is this be a LISP-2?
-
-   No. Well, it's not supposed to be. At the moment, there are still,
-   unfortunately, relics of Common Lisp's silly old variable system. There's no
-   easy way to declare global lexical variables, so we do our best.
-
-
-*** Rationale
-
-
-*** Implementation of Lexical Scope
-
-    It's a lot of work to fake global lexical scope in Common Lisp, and the lack
-    thereof is the single biggest problem I have with language. So, we do
-    something a little whacky. We will override the left paren reader as
-    described in the other Implementation section. This gives us the ability to
-    have any expression in the operator position of a compound expresion. That's
-    a good start.
-
-    Whenever we define a global (non-dynamic) variable, we do a few things. We
-    will also create a symbol macro with the same name that expands to
-    (LEXICAL-VALUE 'SYMBOL). LEXICAL-VALUE itself is a magic macro that determines
-    whether the variable is bound locally, and, if it is, expands to that
-    symbol. Otherwise, it expands to get the LEXICAL-BINDING field from a
-    symbol, which is where we put lexically bound variables.
-
-    In addition to the LEXICAL-BINDING field of the symbol, we also set the
-    function field for the symbol when the field is a function. This requires us
-    to be very careful with how we mutate variables. That is, we must carefully
-    set and unset the function field of a symbol when we change its value.
-    Moreover, we have to be careful
-
-
-*** Implementation 1
-
-    A partial implementation is actually quite straightforward to implement in
-    Common Lisp, but it involves changing the behavior of the reader macro for
-    the left paren, which feels very dirty. I like it.
-
-    Dumb jokes aside, the implementation would be easy and involve two steps.
-    First of all, we would make DEF and DEFN assign both the variable and the
-    function slots of a symbol. Then we redefine the left paren. The new reader
-    would simply invoke the old one, check if the first item in the list is a
-    symbol, and if it isn't, then expand it to a FN-FUNCALL form. FN-FUNCALL
-    behaves like FUNCALL, except that it is also a compiler macro which will
-    strip out CELL-VALUE calls (see the other implementation section), thereby
-    eliminating the middle-man in 
-
-    One problem we would run into is that code pulled in from other common lisp
-    packages would not have its functions in the variable space, so we would
-    still need to use the pointy #'FUN syntax for those guys. Provided there are
-    no collisions in the exported symbols in function/variable space, it would
-    be possible to automatically convert LISP-2 code to FN, but it probably
-    isn't worth the trouble.
-
-
 ** Local definitions
 
 
 * Immediate future
 
-* Why?
 
-  The layman 
