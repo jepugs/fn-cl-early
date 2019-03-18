@@ -63,6 +63,10 @@
               ,@body))
      (recur ,@init-list)))
 
+(defun xor (a b)
+  (or (and a (not b))
+      (and b (not a))))
+
 (defun take (n lst)
   "Take the first n entries from a list"
   (loop for x in lst

@@ -1,14 +1,12 @@
 (in-package :fn-impl)
 
-(load "macros.lisp")
-
 
 (defclass abstract-schema ()
   ((name :initarg :name
          :type symbol
          :documentation "The symbol used by 'new to construct this object")
    (data-classes :initarg :data-classes
-                 :type lists
+                 :type list
                  :documentation "The possible classes of objects constructed by
  this schema. Each type must be unique to this schema, as it is used to pair up
  schemas and instance objects."))
@@ -21,15 +19,15 @@
   ((construct :initarg :construct
               :type function
               :documentation "Function to construct this data. Takes arguments
- (&REST FIELDS).")
+ (&REST KEYS).")
    (get :initarg :get
         :type function
-        :documentation "Function to get field values from instances of this
- schema. Takes arguments (INSTANCE FIELD).")
+        :documentation "Function to get values from instances of this schema.
+ Takes arguments (INSTANCE KEY).")
    (set :initarg :set
         :type function
-        :documentation "Function to set field values in instances of this
- schema. Takes arguments (INSTANCE FIELD VALUE).")
+        :documentation "Function to set values in instances of this schema.
+ Takes arguments (INSTANCE KEY VALUE).")
    (match :initarg :match
           :type function
           :documentation "Function used to do matching and destructuring. It
@@ -47,25 +45,27 @@
  general functions"))
 
 
-(defclass schema (abstract-schema)
-  ((fields :initarg :fields
-           :type list
-           :documentation "ARG-LIST of fields in the schema"))
-
-  (:documentation "A schema with the standard record structure"))
-
 (defclass data-schema (abstract-schema)
   ((arg-list :initarg :arg-list
              :type list
-             :documentation "Arg-list of fields in the schema")
+             :documentation "Arg-list for the constructor, pattern matcher")
    (construct :initarg :construct
               :type function
               :documentation "Constructor for the schema")
+   (slots :initarg :slots
+          :type list
+          :documentation "Slots in objects of this type")
    (options :initarg :options
-            ;; TODO: add dict type
-            :documentation "A dict of options for this schema")))
+            :type list
+            :documentation "A list of options for this schema")))
 
-(defclass data-instance ())
+(defclass data-instance ()
+  ((contents :initarg :contents
+             :type dict
+             :documentation "Dict containing object fields.")
+   (schema :initarg :schema
+           :type schema
+           :documentation "Schema used to construct this instance.")))
 
 (defparameter data-schema-defaults {:mutable false})
 
@@ -94,40 +94,18 @@
   (funcall (slot-value schema 'set) instance field value))
 (defmethod schema-match ((schema general-schema) pattern-args obj)
   (funcall (slot-value schema 'match) pattern-args obj))
-(defmethod schema-pattern-vars (schema pattern-args)
+(defmethod schema-pattern-vars ((schema general-schema) pattern-args)
   (aif (slot-value schema 'pattern-vars)
        (funcall it pattern-args)
-       (mapcan #'schema-pattern-args pattern-args)))
+       (mapcan #'schema-pattern-vars pattern-args)))
 
 ;; schema methods
 (defmethod schema-construct ((schema data-schema) args)
   (apply (slot-value schema 'construct) args))
-(defmethod schema-get ((schema data-schema) instance field)
-  (slot-value instance field))
-(defmethod schema-set ((schema data-schema) instance field value)
-  (setf (slot-value instance field) value))
-
-(defun xor (a b)
-  (or (and a (not b))
-      (and b (not a))))
-
-(defmethod schema-match ((schema schema) pattern-args obj)
-  (labels ((recur (patterns fields res)
-             (when (xor patterns fields)
-               nil)
-             (if fields
-                 (aif (pattern-match (car patterns)
-                                     (slot-value obj (car fields)))
-                      (recur (cdr patterns)
-                             (cdr fields)
-                             (nconc res
-                                    (bindings-alist it)))
-                      nil)
-                 (make-instance 'bindings :alist res))))
-    (recur pattern-args (slot-value schema 'fields) nil)))
-
-(defmethod schema-pattern-vars ((schema schema) pattern-args)
-  (mapcan #'pattern-vars pattern-args))
+(defmethod schema-get ((schema data-schema) instance key)
+  (dict-get (slot-value instance 'contents) key))
+(defmethod schema-set ((schema data-schema) instance key value)
+  (setf (dict-get (slot-value instance 'contents) key) value))
 
 
 (defvar schemas-by-name (make-hash-table :test #'eq)
@@ -155,9 +133,40 @@
                           :data-classes (list ',name)
                           :fields ',fields))))
 
-(defmacro defdata (name options &body fields)
-  `(progn (defclass ,name (data-instance)
-            (,@(mapcar $`() )))))
+(defun data-args-gen (args)
+  "Generates arguments for make-instance with the specified args list"
+  (rlambda (res a*) ([] args)
+    (if a*
+        (let ((s (cond ((is-pos-arg (car a*))
+                        (car a*))
+                       ((is-opt-arg (car a*))
+                        (caar a*))
+                       ((check-key (caar a*) (cadar a*))
+                        (if (is-opt-arg (cadar a*))
+                            (caadar a*)
+                            (cadar a*))))))
+          (recur
+           (append [`',s  s] res)
+           (cdr a*)))
+        res)))
+
+(defmacro defdata (name args)
+  "Defines a new data-schema"
+  `(progn
+     (add-schema
+      (make-instance
+       'data-schema
+       :name ',name
+       :data-classes [',name]
+       :arg-list ',args
+       :construct (fn ,args
+                    (make-instance
+                     ',name
+                     :contents {,@(data-args-gen args)}))
+       :slots (arg-list-vars ',args)
+       :options []))
+     (defclass ,name (data-instance)
+       ((schema :initform (gethash 'name schemas-by-name))))))
 
 (defun @ (obj i)
     (let ((x (class-name (class-of obj))))
@@ -165,7 +174,7 @@
            (schema-get it obj i)
            (error "@: ~a has unknown class" obj))))
 
-(defun (setf @) (obj i v)
+(defun (setf @) (i obj v)
   (let ((x (class-name (class-of obj))))
     (aif (gethash x schemas-by-class)
          (schema-set it obj i v)
@@ -179,50 +188,3 @@
        (schema-construct it args)
        (error "new: unknown schema ~a" name)))
 
-;; add the list schema
-(add-schema
- (make-instance
-  'general-schema
-  :name 'list
-  :data-classes '(cons list null)
-  :construct #'list
-  ;; FIXME: accessor gives null when field is outside its range
-  :get (lambda (instance field)
-         (declare (type integer field)
-                  (type list instance))
-         (nth field instance))
-  :set (lambda (instance field value)
-         (declare (type list instance)
-                  (type integer field))
-         (setf (nth field instance) value))
-  :match (lambda (pattern-args obj)
-           (labels ((recur (patterns tail res)
-                      (if patterns
-                          (if (eq (car patterns) '&)
-                              (aif (pattern-match (cadr patterns) tail)
-                                   (bindings-conc it res)
-                                   nil)
-                              (aif (pattern-match (car patterns) (car tail))
-                                   (recur (cdr patterns)
-                                          (cdr tail)
-                                          (bindings-conc it res))
-                                   nil))
-                          res)))
-             (recur pattern-args obj (make-instance 'bindings))))))
-
-;; TODO: add the dict schema
-
-;; (add-schema
-;;  (make-instance
-;;   'general-schema
-;;   :name 'dict
-;;   :data-classes 'hash-table
-;;   :construct #'dict
-;;   :get (lambda (instance field)
-;;          (declare (type instance list))
-;;          ())))
-
-;; dict pattern is
-;; (dict KEYFORM PATTERN KEYFORM PATTERN ...)
-;; KEYFORM := KEY | (KEY DEFAULT-VALUE)
-;; recommended to use :keywords for dict schema

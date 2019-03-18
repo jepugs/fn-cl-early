@@ -102,3 +102,51 @@ at which point the expression of the clause is executed."
                                   ,(cadr x))))))
                      (group 2 clauses))))))
 
+
+;; add the list schema
+(add-schema
+ (make-instance
+  'general-schema
+  :name 'list
+  :data-classes '(cons list null)
+  :construct #'list
+  ;; FIXME: accessor gives null when field is outside its range
+  :get (lambda (instance field)
+         (declare (type integer field)
+                  (type list instance))
+         (nth field instance))
+  :set (lambda (instance field value)
+         (declare (type list instance)
+                  (type integer field))
+         (setf (nth field instance) value))
+  :match (lambda (pattern-args obj)
+           (labels ((recur (patterns tail res)
+                      (if patterns
+                          (if (eq (car patterns) '&)
+                              (aif (pattern-match (cadr patterns) tail)
+                                   (bindings-conc it res)
+                                   nil)
+                              (aif (pattern-match (car patterns) (car tail))
+                                   (recur (cdr patterns)
+                                          (cdr tail)
+                                          (bindings-conc it res))
+                                   nil))
+                          res)))
+             (recur pattern-args obj (make-instance 'bindings))))))
+
+;; TODO: add the dict schema
+
+;; (add-schema
+;;  (make-instance
+;;   'general-schema
+;;   :name 'dict
+;;   :data-classes 'hash-table
+;;   :construct #'dict
+;;   :get (lambda (instance field)
+;;          (declare (type instance list))
+;;          ())))
+
+;; dict pattern is
+;; (dict KEYFORM PATTERN KEYFORM PATTERN ...)
+;; KEYFORM := KEY | (KEY DEFAULT-VALUE)
+;; recommended to use :keywords for dict schema

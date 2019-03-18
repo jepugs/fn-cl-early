@@ -15,6 +15,6 @@
                (:file "types")
                (:file "lexical")
                (:file "fn")
-               ;;(:file "schema")
+               (:file "schema")
                ;;(:file "match")
-                              ))
+               ))
