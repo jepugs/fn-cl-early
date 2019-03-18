@@ -1,6 +1,10 @@
 (in-package :fn-impl)
 
 
+;;;;;;
+;;; Schema classes
+;;;;;;
+
 (defclass abstract-schema ()
   ((name :initarg :name
          :type symbol
@@ -57,42 +61,27 @@
           :documentation "Slots in objects of this type")
    (options :initarg :options
             :type list
-            :documentation "A list of options for this schema")))
+            :documentation "A list of options for this schema"))
+
+  (:documentation "A schema which has a record structure defined by an
+ arg-list"))
 
 (defclass data-instance ()
   ((contents :initarg :contents
              :type dict
-             :documentation "Dict containing object fields.")
+             :documentation "Dict containing object slots.")
    (schema :initarg :schema
            :type schema
-           :documentation "Schema used to construct this instance.")))
+           :documentation "Schema used to construct this instance."))
 
-(defparameter data-schema-defaults {:mutable false})
-
-(defgeneric schema-construct (schema args)
-  (:documentation "Create an object from the given schema"))
-(defgeneric schema-get (schema instance field)
-  (:documentation "Get a value from an object built by schema"))
-(defgeneric schema-set (schema instance field value)
-  (:documentation "Set a value in an object described by schema"))
-
-;; general-schema methods
-(defmethod schema-construct ((schema general-schema) args)
-  (apply (slot-value schema 'construct) args))
-(defmethod schema-get ((schema general-schema) instance field)
-  (funcall (slot-value schema 'get) instance field))
-(defmethod schema-set ((schema general-schema) instance field value)
-  (funcall (slot-value schema 'set) instance field value))
-
-;; schema methods
-(defmethod schema-construct ((schema data-schema) args)
-  (apply (slot-value schema 'construct) args))
-(defmethod schema-get ((schema data-schema) instance key)
-  (dict-get (slot-value instance 'contents) key))
-(defmethod schema-set ((schema data-schema) instance key value)
-  (setf (dict-get (slot-value instance 'contents) key) value))
+  (:documentation "Superclass for all instances created from data-schemas"))
 
 
+;;;;;;
+;;; Schema definition facilities
+;;;;;;
+
+;;; global tables used to access currently-defined schemas
 (defvar schemas-by-name (make-hash-table :test #'eq)
   "A hash table of schemas sorted by names")
 (defvar schemas-by-class (make-hash-table :test #'eq)
@@ -108,22 +97,12 @@
     (mapcar $(setf (gethash $ schemas-by-class) schema)
             (slot-value schema 'data-classes))))
 
-(defmacro defschema (name &body fields)
-  `(progn (defclass ,name ()
-            (,@(mapcar $`(,$ :initarg ,$)
-                       fields)))
-          (add-schema
-           (make-instance 'schema
-                          :name ',name
-                          :data-classes (list ',name)
-                          :fields ',fields))))
-
-(defun data-args-gen (args)
+(defun data-args-gen (a*)
   "Generates arguments for make-instance with the specified args list"
-  (let ((x (arg-list-vars args)))
+  (let ((x (arg-list-vars a*)))
     (mapcan $[`',$ $] x)))
 
-(defmacro defdata (name args)
+(defmacro defdata (name arg-list)
   "Defines a new data-schema"
   `(progn
      (add-schema
@@ -131,20 +110,48 @@
        'data-schema
        :name ',name
        :data-classes [',name]
-       :arg-list ',args
-       :construct (fn ,args
+       :arg-list ',arg-list
+       :construct (fn ,arg-list
                     (make-instance
                      ',name
-                     :contents {,@(data-args-gen args)}))
-       :slots (arg-list-vars ',args)
+                     :contents {,@(data-args-gen arg-list)}))
+       :slots (arg-list-vars ',arg-list)
        :options []))
      (defclass ,name (data-instance)
        ((schema :initform (gethash 'name schemas-by-name))))
      (defmethod print-object ((object ,name) stream)
        (format stream "(INSTANCE-OF '~s" ',name)
        ,@(mapcar $`(format stream " '~s ~s " ',$ (@ ',$ object))
-                 (arg-list-vars args))
+                 (arg-list-vars arg-list))
        (write-char #\) stream))))
+
+
+;;;;;;
+;;; Schema functions
+;;;;;;
+
+(defgeneric schema-construct (schema args)
+  (:documentation "Create an object from the given schema"))
+(defgeneric schema-get (schema instance slot)
+  (:documentation "Get a value from an object built by schema"))
+(defgeneric schema-set (schema instance slot value)
+  (:documentation "Set a value in an object described by schema"))
+
+;; general-schema methods
+(defmethod schema-construct ((schema general-schema) args)
+  (apply (slot-value schema 'construct) args))
+(defmethod schema-get ((schema general-schema) instance slot)
+  (funcall (slot-value schema 'get) instance slot))
+(defmethod schema-set ((schema general-schema) instance slot value)
+  (funcall (slot-value schema 'set) instance slot value))
+
+;; schema methods
+(defmethod schema-construct ((schema data-schema) args)
+  (apply (slot-value schema 'construct) args))
+(defmethod schema-get ((schema data-schema) instance key)
+  (dict-get (slot-value instance 'contents) key))
+(defmethod schema-set ((schema data-schema) instance key value)
+  (setf (dict-get (slot-value instance 'contents) key) value))
 
 (defun @ (i obj)
     (let ((x (class-name (class-of obj))))

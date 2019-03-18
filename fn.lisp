@@ -56,14 +56,14 @@
        (or (is-pos-arg arg)
            (is-opt-arg arg))))
 
-(defun make-args (l)
-  "Make an args object from an args-list l"
+(defun make-args (a*)
+  "Make an args object from an args-list a*"
   (mapc
    $(when (member $ '(&rest &whole &body &key &optional))
       ;; the user /probably/ made a mistake; this causes whacky behavior
       (warn "FN lambda lists don't understand ~a arguments~%" $))
-   l)
-  (let* ((pos-and (split-if (complement #'is-pos-arg) l))
+   a*)
+  (let* ((pos-and (split-if (complement #'is-pos-arg) a*))
          (opt-and (split-if (complement #'is-opt-arg) (cadr pos-and)))
          (pos (car pos-and))            ;positional args
          (opt (car opt-and))            ;optional args
@@ -96,9 +96,9 @@
                          :has-kw (and kw* t)
                          :has-rest nil)))))
 
-(defun convert-arg-list (l)
+(defun convert-arg-list (a*)
   "Convert an FN-style arg-list to a Common Lisp one"
-  (with-slots (pos opt kw rest has-kw has-rest) (make-args l)
+  (with-slots (pos opt kw rest has-kw has-rest) (make-args a*)
     (labels ((fix-key (k)         ;make key arguments suit CL
                (if (listp (cadr k))
                    ;; with default value
@@ -114,9 +114,9 @@
               (if has-rest
                   ['&rest rest])))))
 
-(defun arg-obj-vars (a)
+(defun arg-obj-vars (x)
   "Get the variable bound by an args-object"
-  (with-slots (pos opt kw rest) a
+  (with-slots (pos opt kw rest) x
     (nconc pos
            (mapcar #'car opt)
            (mapcar #'cadr kw)
@@ -124,9 +124,9 @@
 
 (defun destruct-pos-opt (pos-opt l)
   "Helper function that matches positional and optional argument names to values
- in l. Emits an error if there are not enough elements in l. pos-opt is a
- concatenated list of positional and optional argument forms. Returns a
- dictionary of the mapping and all arguments after matching."
+ in l. Emits an error if there are not enough elements in l. pos-opt is a list
+ of positional and optional argument forms. Returns a dictionary of the mapping
+ and all arguments after matching."
   (rlambda (res a* x*) ({} pos-opt l)
     (let ((name (if (listp (car a*))  ;will be NIL if a* = NIL
                     (caar a*)
@@ -179,9 +179,9 @@
 ;;                    (tail x*))
 ;;             (error "destruct-pos-opt: missing positional arguments")))))
 
-(defun destruct-arg-obj (a l &optional (error-val nil error-val-p))
+(defun destruct-arg-obj (x l &optional (error-val nil error-val-p))
   "Create a key-value pairing of symbols named in args and values in l."
-  (with-slots (pos opt kw rest has-kw has-rest) a
+  (with-slots (pos opt kw rest has-kw has-rest) x
     (let* ((res-and (destruct-pos-opt (append pos opt) l))
            (res (car res-and))
            (l0 (cadr res-and)))
@@ -193,9 +193,9 @@
                        error-val
                        (error "destruct-arg-obj: extra arguments ~s" l0))))))))
 
-(defun arg-list-vars (l)
+(defun arg-list-vars (a*)
   "Get the variable bound by an FN-style args list"
-  (arg-obj-vars (make-args l)))
+  (arg-obj-vars (make-args a*)))
 
 (defun destructure-arg-list (a* l &optional (error-val nil))
   "Create a key-value pairing of symbols named in args and values in l"

@@ -192,6 +192,8 @@ at which point the expression of the clause is executed."
                  res))))
   :pattern-vars (lambda (pattern-args)
                   (let ((pairs (group 2 pattern-args)))
+                    (unless (= (length (car (last pairs))) 2)
+                      (error "dict pattern: Odd number of args"))
                     (mapcan $(pattern-vars (cadr $)) pairs)))))
 
 ;; dict pattern is
