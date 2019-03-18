@@ -57,10 +57,10 @@
 (defun literal-match (pattern obj)
   "Match a literal pattern."
   (if (is-quoted pattern)
-      (if (eq (cadr pattern) obj)
+      (if (equal (cadr pattern) obj)
           {}
           nil)
-      (if (eql pattern obj)
+      (if (equal pattern obj)
           {}
           nil)))
 
