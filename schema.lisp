@@ -75,15 +75,6 @@
   (:documentation "Get a value from an object built by schema"))
 (defgeneric schema-set (schema instance field value)
   (:documentation "Set a value in an object described by schema"))
-;; note: schema-match is only called after it is established that OBJ has the
-;; type described by the schema. Thus you can safely assume obj was constructed
-;; with the schema provided
-(defgeneric schema-match (schema pattern-args obj)
-  (:documentation "Create a bindings object by doing pattern matching on obj.
-  Return NIL if the matching fails."))
-(defgeneric schema-pattern-vars (schema pattern-args)
-  (:documentation "Get the list of symbols that would be bound by successful
-  pattern matching on the given schema"))
 
 ;; general-schema methods
 (defmethod schema-construct ((schema general-schema) args)
@@ -92,12 +83,6 @@
   (funcall (slot-value schema 'get) instance field))
 (defmethod schema-set ((schema general-schema) instance field value)
   (funcall (slot-value schema 'set) instance field value))
-(defmethod schema-match ((schema general-schema) pattern-args obj)
-  (funcall (slot-value schema 'match) pattern-args obj))
-(defmethod schema-pattern-vars ((schema general-schema) pattern-args)
-  (aif (slot-value schema 'pattern-vars)
-       (funcall it pattern-args)
-       (mapcan #'schema-pattern-vars pattern-args)))
 
 ;; schema methods
 (defmethod schema-construct ((schema data-schema) args)
@@ -135,20 +120,8 @@
 
 (defun data-args-gen (args)
   "Generates arguments for make-instance with the specified args list"
-  (rlambda (res a*) ([] args)
-    (if a*
-        (let ((s (cond ((is-pos-arg (car a*))
-                        (car a*))
-                       ((is-opt-arg (car a*))
-                        (caar a*))
-                       ((check-key (caar a*) (cadar a*))
-                        (if (is-opt-arg (cadar a*))
-                            (caadar a*)
-                            (cadar a*))))))
-          (recur
-           (append [`',s  s] res)
-           (cdr a*)))
-        res)))
+  (let ((x (arg-list-vars args)))
+    (mapcan $[`',$ $] x)))
 
 (defmacro defdata (name args)
   "Defines a new data-schema"
@@ -168,13 +141,13 @@
      (defclass ,name (data-instance)
        ((schema :initform (gethash 'name schemas-by-name))))))
 
-(defun @ (obj i)
+(defun @ (i obj)
     (let ((x (class-name (class-of obj))))
       (aif (gethash x schemas-by-class)
            (schema-get it obj i)
            (error "@: ~a has unknown class" obj))))
 
-(defun (setf @) (i obj v)
+(defun (setf @) (v i obj)
   (let ((x (class-name (class-of obj))))
     (aif (gethash x schemas-by-class)
          (schema-set it obj i v)

@@ -8,6 +8,10 @@
     (mapcar $(setf (gethash (car $) res) (cadr $)) kv)
     res))
 
+(defun is-dict (d)
+  "Tell if an object is a dict."
+  (hash-table-p d))
+
 (defun dict-keys (d)
   "Get all defined keys in a dictionary."
   (let ((res []))

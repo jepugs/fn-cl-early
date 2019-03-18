@@ -1,29 +1,46 @@
 (in-package :fn-impl)
 
 
-;; TODO: use a hash table instead of an alist
-(defclass bindings ()
-  ((alist :initarg :alist
-          :initform (list)
-          :type list
-          :accessor bindings-alist
-          :documentation "An ALIST of symbols and values."))
-  (:documentation "An object representing a set of variable bindings."))
+;;;;;;
+;;; Schema methods
+;;;;;;
 
-(defun bindings-conc (b1 &rest b2)
-  "Non-destructively concatenate two bindings objects."
-  (if b2
-      (let ((b* (append (bindings-alist b1)
-                        (bindings-alist (apply #'bindings-conc b2)))))
-        (make-instance 'bindings :alist b*))
-      b1))
+(defgeneric schema-match (schema pattern-args obj)
+  (:documentation "Create a bindings object by doing pattern matching on obj.
+  Return NIL if the matching fails."))
+(defgeneric schema-pattern-vars (schema pattern-args)
+  (:documentation "Get the list of symbols that would be bound by successful
+  pattern matching on the given schema"))
 
-(defun bindings-assignment (bindings vars)
-  "Create a list of SETQ forms assigning the variables named in VARS to the
-corresponding values in BINDINGS."
-  (mapcar (lambda (x)
-            `(setq ,x (cdr (assoc ',x (bindings-alist ,bindings)))))
-          vars))
+(defmethod schema-match ((schema general-schema) pattern-args obj)
+  (funcall (slot-value schema 'match) pattern-args obj))
+(defmethod schema-pattern-vars ((schema general-schema) pattern-args)
+  (aif (slot-value schema 'pattern-vars)
+       (funcall it pattern-args)
+       (mapcan #'schema-pattern-vars pattern-args)))
+
+(defmethod schema-match ((schema data-schema) pattern-args obj)
+  (when (eq (class-name (class-of obj)) ;check type first
+            (slot-value schema 'name))
+    (let ((x (destructure-arg-list (slot-value schema 'arg-list) pattern-args))
+          (res {}))
+      (block b
+        (maphash $(aif (pattern-match $1 (@ $0 obj))
+                       (setf res (dict-extend res it))
+                       (return-from b nil))
+                 x)
+        res))))
+(defmethod schema-pattern-vars ((schema data-schema) pattern-args)
+  (let ((x (destructure-arg-list (slot-value schema 'arg-list)
+                                 pattern-args))
+        (res []))
+    (maphash $(setq res (append res (pattern-vars $1))) x)
+    res))
+
+
+;;;;;;
+;;; Pattern Matching
+;;;;;;
 
 (defun is-quoted (pattern)
   "Tell if pattern is a quoted form."
@@ -41,35 +58,28 @@ corresponding values in BINDINGS."
   "Match a literal pattern."
   (if (is-quoted pattern)
       (if (eq (cadr pattern) obj)
-          (make-instance 'bindings)
+          {}
           nil)
       (if (eql pattern obj)
-          (make-instance 'bindings)
+          {}
           nil)))
 
 (defun pattern-match (pattern obj)
   "Perform pattern matching and return either NIL (no match) or a bindings
 object."
-  (cond ((eq pattern '_)                ; wildcard
-         (make-instance 'bindings))
-        ((and (symbolp pattern) (not (keywordp pattern))) ; variable
-         (make-instance 'bindings
-                        :alist (list (cons pattern obj))))
+  (cond ((eq pattern '_) {})                              ;wildcard
+        ((and (symbolp pattern) (not (keywordp pattern))) ;variable
+         {pattern obj})
         ((is-literal pattern)           ; literal
          (literal-match pattern obj))
         ((listp pattern)                ; schema
          (aif (gethash (car pattern) schemas-by-name)
-              (and (some $(subtypep (class-name (class-of obj))
-                                    $)
-                         (slot-value it 'data-classes))
-                   (schema-match it (cdr pattern) obj))
-              nil))
+              (schema-match it (cdr pattern) obj)
+              (progn (warn "Unknown pattern ~a" pattern)
+                     nil)))
         (t (warn "Unknown pattern ~a" pattern)
            nil)))
 
-;;; FIXME: this would not necessarily work with general schemas. In the future,
-;;; the best solution would probably be another schema method that gives the
-;;; names of the fields bound by that schema.
 (defun pattern-vars (pattern)
   "Makes a list of all variables that a pattern would bind."
   (cond ((eq pattern '_) nil)
@@ -79,28 +89,43 @@ object."
          (list pattern))
         ((is-literal pattern) nil)
         ((and (listp pattern) (symbolp (car pattern))) ;schema pattern
-         (aif (gethash (car pattern))
-              (mapcan #'pattern-vars (schema-pattern-vars it pattern))
-              (error "pattern-vars: schema not found" (car pattern)))
-         ;; this is where the new schema code should go
-         (mapcan #'pattern-vars (cdr pattern)))
+         (aif (gethash (car pattern) schemas-by-name)
+              (mapcan #'pattern-vars (schema-pattern-vars it (cdr pattern)))
+              (progn (warn "pattern-vars: schema not found ~s" (car pattern))
+                     nil)))
         (t nil)))
 
-(defmacro match (obj &body clauses)
+(defun bindings-assignment (bindings vars)
+  "Create a list of SETQ forms assigning the variables named in VARS to the
+ corresponding values in BINDINGS. BINDINGS here is a symbol which names a local
+ variable."
+  (mapcar $`(setq ,$ (dict-get ,bindings ',$)) vars))
+
+
+(defmacro my-case (obj &body clauses)
   "Perform pattern matching on OBJ. Each clause is a pattern and expression
 pair. Patterns are tested in the order specified until the first match is found,
 at which point the expression of the clause is executed."
-  (let ((obj-var (gensym)))
+  (let ((obj-var (gensym))
+        (bid (gensym))
+        (res (gensym)))
     `(let ((,obj-var ,obj))
-       (or ,@(mapcar (lambda (x)
-                       (let ((b (gensym))
-                             (vars (pattern-vars (car x))))
-                         `(let ((,b (pattern-match ',(car x) ,obj-var)))
-                            (if ,b
-                                (let ,vars
-                                  ,@(bindings-assignment b vars)
-                                  ,(cadr x))))))
-                     (group 2 clauses))))))
+       (block ,bid
+         ,@(mapcar (lambda (x)
+                     (let ((b (gensym))
+                           (vars (pattern-vars (car x))))
+                       `(let ((,b (pattern-match ',(car x) ,obj-var)))
+                          (if ,b
+                              (let (,res ,@vars)
+                                ,@(bindings-assignment b vars)
+                                (setq ,res ,(cadr x))
+                                (return-from ,bid ,res))))))
+                   (group 2 clauses))))))
+
+
+;;;;;;
+;;; Pre-defined Schemas
+;;;;;;
 
 
 ;; add the list schema
@@ -110,41 +135,64 @@ at which point the expression of the clause is executed."
   :name 'list
   :data-classes '(cons list null)
   :construct #'list
-  ;; FIXME: accessor gives null when field is outside its range
-  :get (lambda (instance field)
-         (declare (type integer field)
+  :get (lambda (instance slot)
+         (declare (type integer slot)
                   (type list instance))
-         (nth field instance))
-  :set (lambda (instance field value)
+         (nth slot instance))
+  :set (lambda (instance slot value)
          (declare (type list instance)
-                  (type integer field))
-         (setf (nth field instance) value))
+                  (type integer slot))
+         (setf (nth slot instance) value))
   :match (lambda (pattern-args obj)
-           (labels ((recur (patterns tail res)
-                      (if patterns
-                          (if (eq (car patterns) '&)
-                              (aif (pattern-match (cadr patterns) tail)
-                                   (bindings-conc it res)
-                                   nil)
-                              (aif (pattern-match (car patterns) (car tail))
-                                   (recur (cdr patterns)
-                                          (cdr tail)
-                                          (bindings-conc it res))
-                                   nil))
-                          res)))
-             (recur pattern-args obj (make-instance 'bindings))))))
+           (when (listp obj)
+             (rlambda (res a* x*) ({}  pattern-args obj)
+               (cond ((null a*) (if (null x*)
+                                    res
+                                    nil))
+                     ((eq (car a*) '&)
+                      (unless (eq (length a*) 2)
+                        (error "list matching: wrong arguments after &~s"
+                               (cdr a*)))
+                      (aif (pattern-match (cadr a*) x*)
+                           (dict-extend res it)
+                           nil))
+                     ((null x*) nil)
+                     (t (aif (pattern-match (car a*) (car x*))
+                             (recur (dict-extend res it)
+                                    (cdr a*)
+                                    (cdr x*))
+                             nil))))))
+  :pattern-vars (lambda (pattern-args)
+                  (mapcan #'pattern-vars
+                          (remove-if $(eq $ '&) pattern-args)))))
 
-;; TODO: add the dict schema
 
-;; (add-schema
-;;  (make-instance
-;;   'general-schema
-;;   :name 'dict
-;;   :data-classes 'hash-table
-;;   :construct #'dict
-;;   :get (lambda (instance field)
-;;          (declare (type instance list))
-;;          ())))
+(add-schema
+ (make-instance
+  'general-schema
+  :name 'dict
+  :data-classes '(hash-table)
+  :construct #'dict
+  :get (lambda (instance slot)
+         (declare (type dict instance))
+         (dict-get instance slot))
+  :set (lambda (instance slot value)
+         (declare (type dict instance))
+         (setf (dict-get instance slot) value))
+  :match (lambda (pattern-args obj)
+           (when (is-dict obj)
+             ;; this generates an error when there are illegal args
+             (let ((x (apply #'dict pattern-args))
+                   (res {}))
+               (block b
+                 (maphash $(aif (pattern-match $1 (dict-get obj $0))
+                                (setq res (dict-extend res it))
+                                (return-from b nil))
+                          x)
+                 res))))
+  :pattern-vars (lambda (pattern-args)
+                  (let ((pairs (group 2 pattern-args)))
+                    (mapcan $(pattern-vars (cadr $)) pairs)))))
 
 ;; dict pattern is
 ;; (dict KEYFORM PATTERN KEYFORM PATTERN ...)

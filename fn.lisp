@@ -179,7 +179,7 @@
 ;;                    (tail x*))
 ;;             (error "destruct-pos-opt: missing positional arguments")))))
 
-(defun destruct-arg-obj (a l)
+(defun destruct-arg-obj (a l &optional (error-val nil error-val-p))
   "Create a key-value pairing of symbols named in args and values in l."
   (with-slots (pos opt kw rest has-kw has-rest) a
     (let* ((res-and (destruct-pos-opt (append pos opt) l))
@@ -189,15 +189,17 @@
             (has-kw (dict-extend res (destruct-kw kw l0)))
             (t (if (null l0)
                    res
-                   (error "destruct-arg-obj: extra arguments ~s" l0)))))))
+                   (if error-val-p
+                       error-val
+                       (error "destruct-arg-obj: extra arguments ~s" l0))))))))
 
 (defun arg-list-vars (l)
   "Get the variable bound by an FN-style args list"
   (arg-obj-vars (make-args l)))
 
-(defun destructure-arg-list (args l)
+(defun destructure-arg-list (a* l &optional (error-val nil))
   "Create a key-value pairing of symbols named in args and values in l"
-  (destructure-arg-obj (make-args args) l))
+  (destruct-arg-obj (make-args a*) l error-val))
 
 
 ;;;;;;
