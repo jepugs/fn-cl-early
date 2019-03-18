@@ -127,18 +127,33 @@
 (define-compiler-macro |$-lambda| (form)
   form)
 
-(defun dollar-flatten (tree)
-  "Like FLATTEN, but discards |$-lambda$| forms and quoted symbols."
+(defun dollar-flatten (tree &optional (qquote nil))
+  "Like FLATTEN, but discards |$-lambda$| forms and quoted symbols. QQUOTE is
+ whether we're within a quasiquote form."
   (cond
-    #+sbcl
-    ((sb-impl::comma-p tree) (flatten (sb-impl::comma-expr tree)))
-    ((not (listp tree)) (list tree))
-    ((is-quoted tree) nil)
-    ;; removing $-lambda forms lets us 
+    #+sbcl                              ;check for commas
+    ((sb-impl::comma-p tree) (dollar-flatten (sb-impl::comma-expr tree) nil))
+    ((not (listp tree))
+     (if qquote
+         nil
+         (list tree)))
+    #+sbcl                              ;turn on quasiquote mode
+    ((and (not qquote)
+          (eq (car tree) 'sb-int:quasiquote))
+     (dollar-flatten (cadr tree) t))
+    ;; Normally, quoted values should be ignored. However, within quasiquote,
+    ;; quote forms may contain commas that we need to explore recursively
+    ((is-quoted tree)
+     (if qquote
+         (dollar-flatten (cadr tree) t)
+         nil))
+    ;; removing $-lambda forms lets us nest $
     ((eq (car tree) '|$-lambda|) nil)
     ;; FIXME: we can improve behavior by accounting for variable-binding
     ;; forms like LET, but also, who really cares? (not me -- Jack)
-    (t (mapcan #'dollar-flatten tree))))
+    (t (mapcan (lambda (x)
+                 (dollar-flatten x qquote))
+               tree))))
 
 (defun is-string-numid (str)
   "Tell if STR is a positive integer without leading zeros (i.e. a numerical id)."
