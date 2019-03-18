@@ -139,7 +139,12 @@
        :slots (arg-list-vars ',args)
        :options []))
      (defclass ,name (data-instance)
-       ((schema :initform (gethash 'name schemas-by-name))))))
+       ((schema :initform (gethash 'name schemas-by-name))))
+     (defmethod print-object ((object ,name) stream)
+       (format stream "(INSTANCE-OF '~s" ',name)
+       ,@(mapcar $`(format stream " '~s ~s " ',$ (@ ',$ object))
+                 (arg-list-vars args))
+       (write-char #\) stream))))
 
 (defun @ (i obj)
     (let ((x (class-name (class-of obj))))
