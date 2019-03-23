@@ -114,6 +114,33 @@
 
 
 
+* Types and Protocols
+
+  The type of an object can be accessed via the (type-of OBJ) built-in function.
+  Types in FN are as simple as possible. Every object has a single type
+  represented by a symbol. There is also a wildcard type which is represented by
+  the underscore `_'. In the future, we may add parametric types.
+
+  As with all dynamically typed languages, the extent to which the programmer
+  interacts with the type system is limited. That said, fn is strongly typed
+  in the sense that an error will be raised when there is an attempt to perform
+  an operation on an inappropriate type.
+
+  For now, types are all but invisible. I would like to extend the language so
+  that the user can specify types for function arguments and data structure
+  slots. The idea here is to automagically bake type checking into functions and
+  constructors so that the coder doesn't need to type out (if (is-list x) ...).
+
+
+** Built-in Types
+
+   - list :: list
+   - vector :: vector
+   - string :: string
+   - integer :: integer
+   - char :: character
+
+
 * New lambda lists
 
   Common Lisp's syntax for argument lists is great because it's unambiguous,
@@ -132,14 +159,14 @@
   about &OPTIONAL and &KEY-- optional forms are now just lists, and keyword
   forms are actual keywords. This is a taste of our new argument lists:
 
-  #+BEGIN_SRC common-lisp
+  #+BEGIN_SRC fn
   (defn func (positional-arg (optional-arg "init") :keyword-arg (keyword-arg "key-init"))
     (function-body))
   #+END_SRC
 
   And here are some translations from Common Lisp:
 
-  #+BEGIN_SRC common-lisp
+  #+BEGIN_SRC fn
   (defun operator (operand0 &rest operands) ...)
   ;; => (in FN)
   (defn operator (operand0 & operands) ...)
@@ -156,7 +183,7 @@
   This also gives us the ability to define non-optional keyword arguments via
   the syntax (:keyword-arg keyword-arg) (where the arg is a symbol, not a list).
 
-  #+BEGIN_SRC common-lisp
+  #+BEGIN_SRC fn
   ;; define a function requiring a keyword argument
   (defn func (:req-key req-key :opt-key (opt-key "default")) 
     (function-body))
@@ -176,9 +203,99 @@
   I implemented global lexical scope in Common Lisp so we can have it in fn.
 
   
+* FN Code Conventions
+
+  This one has personal significance because readability is always one of the
+  biggest complaints normies have about Lisp. We address this in almost every
+  aspect of fn's design, for instance by keeping the core language very small,
+  reusing interfaces wherever possible (see arg lists), and minimizing the paren
+  count (e.g. by removing extra parens from cond and let). However, having a
+  clear set of code conventions is also very important for writing readable
+  code.
+
+  I have two problems with how most LISP code is formatted (other than all the
+  bad naming conventions):
+
+  - Too many levels of indentation
+  - Too many consecutive closing parens
+
+  That's it.
+
+
+** Indentation
+
+Indentation is arguably the most important convention to decide upon, because it
+is the most complicated thing to implement in the text editor. My emacs mode
+should be able to automatically indent all built-in forms as well as normal
+function calls
+
+All macro bodies should be indented two spaces relative to the opening paren
+that started them. Lines longer than 80 characters should be avoided. To be
+clear, not all macros have bodies, and forms such as `and' and `or' can be
+indented according to normal function rules.
+
+
+*** Function arguments
+
+    #+BEGIN_SRC fn
+    
+    #+END_SRC
+
+
+*** Definitions
+
+    At the time of writing, there are 20 special operators planned for fn. Eight
+    of those are definitions, although def, def*, and defvar are different
+    because they can bind. For these operators, observe the conventions for
+    alternating pairs operators. Otherwise, we will observe the following
+    conventions:
+
+    #+BEGIN_SRC fn
+    (defform name arg-list ;omit arg-list where applicable
+      ;; indent two spaces for all body forms
+      (body-line1)
+      (body-line2)) ;closing paren on same line
+
+    ;; e.g.
+    (defdata Contact (:name name :mail mail))
+
+    (defn factorial (n)
+      (if (= n 0)
+      ;; two levels indent for if, see other special forms
+      1
+      (* n (factorial (- n 1)))))
+    #+END_SRC
+
+
+*** Alternating pairs
+
+    Many of our special forms contain lists whose arguments are processed
+    pairwise. For example, the variable definition part of let and the bodies of
+    cond and case. For these we observe the following convention: either put
+    both expressions on the same line, or else indent the second component of
+    each pair two levels deeper than the one before.
+
+    #+BEGIN_SRC fn
+    (case lst
+      [] "empty" ;short clauses go on one line
+      [[] & _]   ;longer clauses go on the next line
+        (string "empty head found") ;indent 2 spaces deeper
+      (hd & tl)  ;put multiline consequences in a do block
+        (do
+          (do-something-with-head hd)
+          (long-expression-with-tail tl)))
+
+    (let (1liner (short-expr) ;short definitions on one line
+          multi-liner ;align with previous variable name
+            (much-longer-expression :with-params some-params)
+          (pattern a _) ;here we could use either convention
+            (do-something-with a))
+      (do-something-with-these-vars 1liner multi-liner))
+    #+END_SRC
+
+
 * Misc functions/macros
 
-  - defschema
   - with-fields, with-fields*
   - match
   - dict
@@ -202,6 +319,46 @@
   - Every schema has a corresponding pattern matcher
   - When looking up an object's schema, we will use the class name of the object
     as the key for a hash table. This is to make the lookup as fast as possible.
+
+
+* Standard Library
+  
+** Built-in data types (and how they're made)
+
+   - bool :: true or false (literals)
+   - int :: integer (literal)
+   - float :: floating-point number (literal)
+   - string :: utf-8 string, is-string (literal)
+   - list :: singley-linked list (list and cons functions)
+   - vec :: fixed-width vector (vector function)
+   - dict :: (immutable?) dictionary, (dict function)
+   - fn :: function. Make 'em with fn. Would like to parameterize this type
+           eventually
+   - bytes :: vector of literal bytes. Used for FFI biz. Not sure how to
+              construct it (yet)
+
+
+** 
+
+
+** Type tests
+
+   - is-bool
+   - is-int 
+   - is-float
+   - is-string 
+   - is-char :: check for characters
+   - is-list
+   - is-vec
+   - is-dict
+   - is-bytes
+
+
+** Things to copy from other people:
+
+   - arrays, linalg, random (from NumPy)
+   - map, reduce, filter, zip (from every good pl)
+   - threading macros (from Clojure)
 
 
 * Experimental Zone
@@ -327,7 +484,58 @@
 
 ** Local definitions
 
-
+   
 * Immediate future
 
 
+* list of special character:
+
+- () for code
+- [] creates lists (evaluates arguments)
+- {} creates dicts (evaluates args)
+- $ creates anonymous functions (only when alone)
+- # used for characters and dispatch (rethink?)
+- ' quoting
+- ` and , quasiquoting
+- : keywords, symbol modules
+- \ escape next char
+- ; comments
+
+
+non-alphanumeric characters used in identifiers
+
+- ! as a suffix indicates mutation (it's like we're yelling!)
+- @ by itself is the universal accessor
+- & by itself denotes rest arguments
+- *, +, /, =, <, >, _, - (normal identifiers)
+
+
+Characters discarded from CL:
+
+- || for multi-char escapes
+- . for dotted lists (what a dumb useless thing)
+
+
+Characters reserved for future extensions
+
+- ~, ^, %, and ?
+
+
+*Ideas*
+
+- Perhaps programmers should be encouraged to make use of $-args in their own
+  macros in order to further promote consistency in the language, for instance
+  to automatically create gensyms in macros.
+- Maybe drop the ! convention-- since global variables are immutable by default,
+  it is less crucial to keep track of state changes. Maybe not, though, as
+  constant globals can still contain mutable data structures (we'll think about
+  that though-- possibly add an immutable flag to instances? (would have to make
+  lists, dicts immutable by default))
+- It would be cool if we could drop the # syntax altogether-- presently all it
+  does is read in characters and alternative-radix numbers (could be done with
+  0x00 syntax). Perhaps we could do this by taking the Javascript approach
+  (strings of length 1 are single characters)
+- I also like single quoting for string syntax, but I think it's important to
+  lisp that we leave quoting characters alone. It's not such a hardship to use
+  double quotes-- the idiots using C and Java have been doing it for ages (smart
+  people have to do it too).
