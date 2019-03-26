@@ -80,6 +80,15 @@ object."
         (t (warn "Unknown pattern ~a" pattern)
            nil)))
 
+(defun patterns-match (patterns objs)
+  "Chain together a series of pattern matches."
+  (let ((match-res (mapcar #'pattern-match patterns objs)))
+    (if (every #'values match-res)
+        (reduce #'dict-extend
+                match-res
+                :initial-value {})
+        nil)))
+
 (defun pattern-vars (pattern)
   "Makes a list of all variables that a pattern would bind."
   (cond ((eq pattern '_) nil)
@@ -101,6 +110,23 @@ object."
  variable."
   (mapcar $`(setq ,$ (dict-get ,bindings ',$)) vars))
 
+(defun pattern-assignments (patterns objs match-form else-form)
+  "Creates code to declare and assign the variables in patterns to their matches
+ in objs. This binds both variable and function namespaces. If all matches are
+ successful, match-form is evaluated in the new lexical environment. Otherwise,
+ else-form is evaluated."
+  (let ((b (gensym))
+        (vars (mapcan #'pattern-vars patterns)))
+    `(let ((,b (patterns-match ',patterns [,@objs])))
+       (if ,b
+           (let ,vars
+             (labels ,(mapcar $(let ((g (gensym)))
+                                 `(,$ (&rest ,g)
+                                      (cl:apply ,$ ,g)))
+                              vars)
+               (progn ,@(bindings-assignment b vars))
+               ,match-form))
+           ,else-form))))
 
 (defmacro my-case (obj &body clauses)
   "Perform pattern matching on OBJ. Each clause is a pattern and expression
@@ -111,15 +137,11 @@ at which point the expression of the clause is executed."
         (res (gensym)))
     `(let ((,obj-var ,obj))
        (block ,bid
-         ,@(mapcar (lambda (x)
-                     (let ((b (gensym))
-                           (vars (pattern-vars (car x))))
-                       `(let ((,b (pattern-match ',(car x) ,obj-var)))
-                          (if ,b
-                              (let (,res ,@vars)
-                                ,@(bindings-assignment b vars)
-                                (setq ,res ,(cadr x))
-                                (return-from ,bid ,res))))))
+         ,@(mapcar $(pattern-assignments [(car $)]
+                                         [obj-var]
+                                         `(let ((,res ,(cadr $)))
+                                            (return-from ,bid ,res))
+                                         nil)
                    (group 2 clauses))))))
 
 

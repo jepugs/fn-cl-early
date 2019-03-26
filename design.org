@@ -539,3 +539,129 @@ Characters reserved for future extensions
   lisp that we leave quoting characters alone. It's not such a hardship to use
   double quotes-- the idiots using C and Java have been doing it for ages (smart
   people have to do it too).
+
+
+* Versions
+
+** Version conventions
+
+We will use the convention three number (major.minor.patch) release numbering.
+
+There are special rules for major version 0, but in general we will
+
+- increment the patch number for substantial bug fixes, optimizations, and minor
+  interface improvements not related to the core language or the standard
+  library (i.e. changes to the highlighting and the emacs mode)
+- increment the minor version number for any compatibility breaking changes to
+  the standard library, the addition of new library features, minor language
+  changes, and additions to the language that do not break existing code (except
+  for possibly introducing name collisions). Also increment it for changes to
+  the tools and platform that don't break old interfaces
+- increment the major version number for substantial changes or additions to the
+  core language, platform, and tooling. Example: when we ditch Common Lisp and
+  move on to our own custom vm, this will be a major version change.
+
+Patch increments will happen on an as needed basis. I intend to test fn by
+writing a lot of code in it. I'll fix bugs as I go and bump the patch number
+when I feel like I'm at a logical place to do so. Don't expect to see a ton of
+these early on. Minor and major version releases will have milestone lists, and
+I will only increment the version number after reaching all the goals.
+
+Since we don't expect to have a stable language or standard library for some
+time, we will change the rules for the version 0 release series, with the goal
+of having a stable language, library, and tools by the time we hit 1.0.
+
+
+** Version 0.0.0 Milestones
+
+   The goal for version 0.0.0 is to have the core language fully implemented
+   except for symbols and modules. Our milestones are
+
+   - 90% implementation of data structures (defdata) and protocols (defimpl,
+     defproto). We'll be missing the generalized deftype, and we'll be missing
+     more sophisticated options
+   - emacs major mode with mostly-correct indentation and syntax highlighting
+   - all core special operators implemented: def, def*, defdata, defimpl,
+     defmacro, defn, defproto, defvar, @, and, case, cond, do, if, fn, let, new,
+     set!
+   - case sensitive reader
+   - fn package that exposes all language forms. I should be able to do
+     (in-package :fn) and write (approximately) fn code.
+   - making # a normal character
+
+
+** Version 0.1 Milestones
+
+   For version 0.1, we want to have the core language and tooling fully
+   implemented. If we do it right, then from this version all the way up to
+   version 1.0, the only substantial changes will be in module system and
+   standard library.
+
+   - FN-READ, FN-EVAL, and FN-PRINT functions in the CL-FN package that let
+     Common Lisp code embed fn
+   - signal system for error handling and control flow
+   - more general type definition
+   - stable core language syntax, meaning we have to address quasiquoting, the
+     colon, and the dot
+   - differentiation of the empty list and false
+   - emacs command to send fn code to a SLIME repl
+   - change how function application works
+   - add the Callable interface
+   - decide on a standard library naming convention
+   - add the Sequence interface and libraries
+   - implementation of input/output streams
+   - automatic type checks via type annotations
+
+
+   *Notable Missing Features*
+
+   - module system
+   - doc strings and help function
+   - stack traces/debugging features
+   - bit vectors
+
+
+** Version 1.0 Milestones
+
+   Version 1.0 will be a usable programming language with actual tooling and a
+   standard library that lets it do pretty much anything you'd want to do in a
+   UNIX environment. At this point, it will still all be Common Lisp under the
+   hood, but that will be abstracted away to being a simple implementation
+   detail. After version 1.0, we'll flesh out the standard library a bit, but
+   the next big milestone will be ditching Common Lisp entirely in favor of C++
+   and LLVM.
+
+   Once I reach the first release candidate, I'm going to take a break and
+   develop a substantial amount of code in fn. My first project will be a VM
+   orchestrator. During this time, I'll be adjusting language features, fixing
+   bugs, and extending the standard library as needed.
+
+   - I will have written a lot of code in fn and determined that it is useful
+   - the core language will be stable
+   - documentation functions work
+   - foreign function interface
+   - module system including library path, multi-file module declaration,
+     submodules, imports and qualified imports, file imports, and reloading
+   - standard library includes threading, filesystem, file I/O, IPC and network
+     sockets, system shell commands, subprocesses, command line arguments,
+     and environment variables (all the usual UNIX stuff)
+   - consistent error handling interfaces across the entire standard library
+   - emacs major mode has its own shell
+   - emacs mode can collapse code forms (particularly function options/doc
+     strings)
+   - immutable reimplementation of dicts
+   - defdata has options and knows how to use them (i.e. mutable, immutable)
+   - debugging including programmatically-accessible stack traces and
+     breakpoints, plus global debug options
+   - different optimization levels (i.e. disable type checks)
+
+
+   *Notable Missing Features*
+
+   - port implementation from Common Lisp to C++
+   - compiler via LLVM
+   - scientific and symbolic computing in the standard library
+   - regex in the standard library
+   - package/module manager
+   - web server
+
