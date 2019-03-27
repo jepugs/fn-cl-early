@@ -12,9 +12,9 @@
   :serial t
   :components ((:file "package-impl")
                (:file "macros")
-               (:file "types")
-               (:file "lexical")
-               (:file "fn")
+               (:file "dict")
                (:file "schema")
                (:file "match")
-               (:file "special-misc")))
+               (:file "lexical")
+               (:file "fn")
+               (:file "bootlib")))

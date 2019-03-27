@@ -12,6 +12,7 @@
   "Tell if an object is a dict."
   (hash-table-p d))
 
+
 (defun dict-keys (d)
   "Get all defined keys in a dictionary."
   (let ((res []))
@@ -21,9 +22,11 @@
              d)
     res))
 
+
 (defun dict-has-key (d key)
   "Tell if a key is in a dict."
   (member key (dict-keys d) :test #'equal))
+
 
 (defun dict-get (d key)
   "Get a value from a dict."
@@ -31,6 +34,7 @@
     (if bound
         val
         (error "dict-get: can't find key in dict: ~a" key))))
+
 
 (defun (setf dict-get) (val d key)
   "Set a value in a dict."
@@ -40,8 +44,6 @@
   (let ((res (copy-structure dict)))
     (setf (dict-get res key) value)
     res))
-
-
 
 (defun dict-extend (dict0 &rest dicts)
   "Extend dict1 with the keys contained in dicts. This operation is purely
@@ -55,6 +57,7 @@
         (apply #'dict-extend dict1 (cdr dicts)))
       dict0))
 
+
 (deftype dict () 'hash-table)
 
 (defmethod print-object ((object hash-table) stream)
@@ -63,9 +66,3 @@
              (format stream "~s ~s " k v))
            object)
   (write-char #\} stream))
-
-;; (defclass fn-stream ()
-;;   ())
-
-(defconstant true t)
-(defconstant false nil)

@@ -61,7 +61,9 @@
            (not mutable)
            (not (is-mutable sym))
            (not (equal (get sym 'initform) val)))
-      (warn "DEF: rebinding constant ~a with new initform." sym))
+      nil
+      ;;(warn "DEF: rebinding constant ~a with new initform." sym)
+      )
   (let ((gval (gensym)))
     (unless (symbolp sym)
       (error "DEF: var is not a symbol ~a" sym))
@@ -88,27 +90,3 @@
              (fmakunbound sym)))
         (t (set sym val))))
 
-;;; TODO: Add pattern destructuring to def
-(defmacro def (&body pattern-value-pairs)
-  "Define a lexical constant."
-  (let* ((pairs (group 2 pattern-value-pairs)))
-    `(progn . ,(mapcar $`(define-lexically ,(car $) ,(cadr $) nil)
-                       pairs))))
-
-(defmacro my-defvar (&body pattern-value-pairs)
-  "Define a lexical variable."
-  ;; same as def except we set the mutable flag to T
-  (let* ((pairs (group 2 pattern-value-pairs)))
-    `(progn . ,(mapcar $`(define-lexically ,(car $) ,(cadr $) t)
-                       pairs))))
-
-(defmacro defn (name arg-list &body body)
-  "Define a function."
-  `(def ,name (fn ,arg-list . ,body)))
-
-
-
-(defmacro set! (name value)
-  "Update the value of a named variable"
-  ;; For now, this is all we need
-  `(setf ,name ,value))

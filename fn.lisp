@@ -263,35 +263,3 @@
          #',self))))
 
 
-(defmacro fn (arg-list &body body)
-  "Like lambda, but with different argument list and support for options"
-  (let* ((lform `(lambda ,(convert-arg-list arg-list) . ,body))
-         (lopt (get-options body)))
-    ;; IMPLNOTE: if at all possible, implement new options by expanding the
-    ;; pipeline before
-    (->> lform
-      (funcall $(aif (dict-get lopt :memoize)
-                     `(memoize ,$)
-                     $))
-      (funcall $(aif (dict-get lopt :curry)
-                     (curry-transform it $)
-                     $)))))
-
-;; ;; test code (it's /almost/ unit tests lol)
-;; (setf (symbol-function '+c) (fn (a & a*)
-;;                               {:curry 1}
-;;                               (apply #'+ a a*)))
-;; (setf (symbol-function '+m) (fn (a & a*)
-;;                                  {:memoize t}
-;;                                  (sleep 2.0)
-;;                                  (apply #'+ a a*)))
-;; (setf (symbol-function '+slow) (fn (a & a*)
-;;                                  {:curry 1 :memoize t}
-;;                                  (sleep 2.0)
-;;                                  (apply #'+ a a*)))
-;; (setf (symbol-function 'test-args)
-;;       (fn (a (b 'nothing) :c (c 'nothing))
-;;         (format t "~s ~s ~s" a b c)))
-;; (setf (symbol-function 'test-req-key)
-;;       (fn (:req1 req1 :req2 req2 :opt1 (opt1 'unspec))
-;;         (format t "~s, ~s, and (optional) ~s" req1 req2 opt1)))

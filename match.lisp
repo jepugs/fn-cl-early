@@ -104,6 +104,17 @@ object."
                      nil)))
         (t nil)))
 
+(defun for-match-vars (pattern obj body-func)
+  "For use in macro writing. Returns code that executes body for each variable
+ bounding by the match. Body func should accept two arguments, a name var and a
+ form var, and return an expression for the body (i.e. code to execute for each
+ pair)."
+  (let ((b (gensym)))
+    `(let ((,b (pattern-match ',pattern ,obj)))
+       ,@(mapcar (lambda (x)
+                   (funcall body-func x `(dict-get ,b ',x)))
+                 (pattern-vars pattern)))))
+
 (defun bindings-assignment (bindings vars)
   "Create a list of SETQ forms assigning the variables named in VARS to the
  corresponding values in BINDINGS. BINDINGS here is a symbol which names a local
@@ -128,97 +139,5 @@ object."
                ,match-form))
            ,else-form))))
 
-(defmacro my-case (obj &body clauses)
-  "Perform pattern matching on OBJ. Each clause is a pattern and expression
-pair. Patterns are tested in the order specified until the first match is found,
-at which point the expression of the clause is executed."
-  (let ((obj-var (gensym))
-        (bid (gensym))
-        (res (gensym)))
-    `(let ((,obj-var ,obj))
-       (block ,bid
-         ,@(mapcar $(pattern-assignments [(car $)]
-                                         [obj-var]
-                                         `(let ((,res ,(cadr $)))
-                                            (return-from ,bid ,res))
-                                         nil)
-                   (group 2 clauses))))))
 
 
-;;;;;;
-;;; Pre-defined Schemas
-;;;;;;
-
-
-;; add the list schema
-(add-schema
- (make-instance
-  'general-schema
-  :name 'list
-  :data-classes '(cons list null)
-  :construct #'list
-  :get (lambda (instance slot)
-         (declare (type integer slot)
-                  (type list instance))
-         (nth slot instance))
-  :set (lambda (instance slot value)
-         (declare (type list instance)
-                  (type integer slot))
-         (setf (nth slot instance) value))
-  :match (lambda (pattern-args obj)
-           (when (listp obj)
-             (rlambda (res a* x*) ({}  pattern-args obj)
-               (cond ((null a*) (if (null x*)
-                                    res
-                                    nil))
-                     ((eq (car a*) '&)
-                      (unless (eq (length a*) 2)
-                        (error "list matching: wrong arguments after &~s"
-                               (cdr a*)))
-                      (aif (pattern-match (cadr a*) x*)
-                           (dict-extend res it)
-                           nil))
-                     ((null x*) nil)
-                     (t (aif (pattern-match (car a*) (car x*))
-                             (recur (dict-extend res it)
-                                    (cdr a*)
-                                    (cdr x*))
-                             nil))))))
-  :pattern-vars (lambda (pattern-args)
-                  (mapcan #'pattern-vars
-                          (remove-if $(eq $ '&) pattern-args)))))
-
-
-(add-schema
- (make-instance
-  'general-schema
-  :name 'dict
-  :data-classes '(hash-table)
-  :construct #'dict
-  :get (lambda (instance slot)
-         (declare (type dict instance))
-         (dict-get instance slot))
-  :set (lambda (instance slot value)
-         (declare (type dict instance))
-         (setf (dict-get instance slot) value))
-  :match (lambda (pattern-args obj)
-           (when (is-dict obj)
-             ;; this generates an error when there are illegal args
-             (let ((x (apply #'dict pattern-args))
-                   (res {}))
-               (block b
-                 (maphash $(aif (pattern-match $1 (dict-get obj $0))
-                                (setq res (dict-extend res it))
-                                (return-from b nil))
-                          x)
-                 res))))
-  :pattern-vars (lambda (pattern-args)
-                  (let ((pairs (group 2 pattern-args)))
-                    (unless (= (length (car (last pairs))) 2)
-                      (error "dict pattern: Odd number of args"))
-                    (mapcan $(pattern-vars (cadr $)) pairs)))))
-
-;; dict pattern is
-;; (dict KEYFORM PATTERN KEYFORM PATTERN ...)
-;; KEYFORM := KEY | (KEY DEFAULT-VALUE)
-;; recommended to use :keywords for dict schema

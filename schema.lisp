@@ -102,29 +102,6 @@
   (let ((x (arg-list-vars a*)))
     (mapcan $[`',$ $] x)))
 
-(defmacro defdata (name arg-list)
-  "Defines a new data-schema"
-  `(progn
-     (add-schema
-      (make-instance
-       'data-schema
-       :name ',name
-       :data-classes [',name]
-       :arg-list ',arg-list
-       :construct (fn ,arg-list
-                    (make-instance
-                     ',name
-                     :contents {,@(data-args-gen arg-list)}))
-       :slots (arg-list-vars ',arg-list)
-       :options []))
-     (defclass ,name (data-instance)
-       ((schema :initform (gethash 'name schemas-by-name))))
-     (defmethod print-object ((object ,name) stream)
-       (format stream "(INSTANCE-OF '~s" ',name)
-       ,@(mapcar $`(format stream " '~s ~s " ',$ (@ ',$ object))
-                 (arg-list-vars arg-list))
-       (write-char #\) stream))))
-
 
 ;;;;;;
 ;;; Schema functions
@@ -153,23 +130,4 @@
 (defmethod schema-set ((schema data-schema) instance key value)
   (setf (dict-get (slot-value instance 'contents) key) value))
 
-(defun @ (i obj)
-    (let ((x (class-name (class-of obj))))
-      (aif (gethash x schemas-by-class)
-           (schema-get it obj i)
-           (error "@: ~a has unknown class" obj))))
-
-(defun (setf @) (v i obj)
-  (let ((x (class-name (class-of obj))))
-    (aif (gethash x schemas-by-class)
-         (schema-set it obj i v)
-         nil)))
-
-(defmacro new (name &rest args)
-  `(new* ',name ,@args))
-
-(defun new* (name &rest args)
-  (aif (gethash name schemas-by-name)
-       (schema-construct it args)
-       (error "new: unknown schema ~a" name)))
 
