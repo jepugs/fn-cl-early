@@ -470,6 +470,22 @@ at which point the expression of the clause is executed."
 (defn/boot |is-num| (x)
   (rebool (numberp x)))
 
+(defn/boot (|+-impl| "+") (x0 & x)
+  {:curry 1}
+  (apply #'+ x0 x))
+(defn/boot (|--impl| "-") (x0 & x)
+  {:curry 1}
+  (apply #'- x0 x))
+(defn/boot (|*-impl| "*") (x0 & x)
+  {:curry 1}
+  (apply #'* x0 x))
+(defn/boot (|/-impl| "/") (x0 & x)
+  {:curry 1}
+  (apply #'/ x0 x))
+(defn/boot |mod| (n d)
+  {:curry 1}
+  (mod n d))
+
 
 ;;;;;;
 ;;; Sequences (in lieu of a real protocol)

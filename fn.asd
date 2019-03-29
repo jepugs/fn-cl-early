@@ -18,4 +18,5 @@
                (:file "lexical")
                (:file "fn")
                (:file "bootlib")
-               (:file "reader")))
+               (:file "reader")
+               (:file "bootstrap")))
