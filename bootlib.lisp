@@ -1,18 +1,76 @@
 ;;;; bootlib.lisp -- definitions used to bootstrap the standard library
 (in-package :fn-impl)
 
+;;;;;;
+;;; Macros for Bootstrap Definitions
+;;;;;;
+
+(defparameter bootlib-lexical-exports nil
+  "Lexical variables which will be automatically copied to the fn package using def.
+ These symbols will be copied using the def special form.")
+(defparameter bootlib-macro-exports nil
+  "Describes which symbols which should be copied to the fn package as macros.")
+(defparameter bootlib-sym-macro-exports nil
+  "Describes which symbols which should be copied to the fn package as symbol
+ macros.")
+
+;;; TODO: hook exports code into lexical definitions code to prevent people from
+;;; redefining built-in forms.
+
+(eval-when (:compile-toplevel :load-toplevel :execute)
+  (defun check-name-form (name-form function-name)
+    "Ensures validity of the name forms in the /boot macros. function-name is used
+ for generating the error message."
+    (unless (or (symbolp name-form)
+                (and (listp name-form)
+                     (= (length name-form) 2)
+                     (symbolp (car name-form))
+                     (stringp (cadr name-form))))
+      (error "~a: invalid name form ~s" function-name name-form))))
+
+(defmacro def/boot (name-form value)
+  "Define a lexical global and add it to the lexical export list. This is more
+ restricted than the def operator in that it doesn't support pattern matching or
+ multiple definitions."
+  (check-name-form name-form "DEF/BOOT")
+  (let* ((name (if (listp name-form) (car name-form) name-form)))
+    `(progn (|def| ,name ,value)
+            (push ',name-form bootlib-lexical-exports))))
+
+(defmacro defn/boot (name-form arg-list &body body)
+  "Define a lexical global function and add it to the lexical export list.
+ This macro accepts the same arguments as defn."
+  (check-name-form name-form "DEFN/BOOT")
+  (let* ((name (if (listp name-form) (car name-form) name-form)))
+    `(progn (|defn| ,name ,arg-list ,@body)
+            (push ',name-form bootlib-lexical-exports))))
+
+(defmacro defmacro/boot (name-form arg-list &body body)
+  "Creates a macro definition and adds it to the export list. Unlike the
+ other /BOOT macros, this uses a Common Lisp-style lambda list."
+  (check-name-form name-form "DEFMACRO/BOOT")
+  (let* ((name (if (listp name-form) (car name-form) name-form)))
+    `(progn (defmacro ,name ,arg-list ,@body)
+            (push ',name-form bootlib-macro-exports))))
+
+(defmacro def-sym-macro/boot (name-form expansion)
+  (check-name-form name-form "DEF-SYM-MACRO/BOOT")
+  (let* ((name (if (listp name-form) (car name-form) name-form)))
+    `(progn (define-symbol-macro ,name ,expansion)
+            (push ',name-form bootlib-sym-macro-exports))))
+
 
 ;;;;;;
 ;;; null type
 ;;;;;;
 
-(define-symbol-macro |null| '|null|)
+(def-sym-macro/boot |null| '|null|)
 
 ;;;;;;
-;;; our eponymous function caller
+;;; our eponymous function maker
 ;;;;;;
 
-(defmacro |fn| (arg-list &body body)
+(defmacro/boot |fn| (arg-list &body body)
   "Like lambda, but with different argument list and support for options"
   (let* ((lform `(lambda ,(convert-arg-list arg-list) |null| ,@body))
          (lopt (get-options body)))
@@ -28,10 +86,18 @@
 
 
 ;;;;;;
+;;; Quoting
+;;;;;;
+
+(defmacro/boot |quote| (thing)
+  `(quote ,thing))
+
+
+;;;;;;
 ;;; Definers
 ;;;;;;
 
-(defmacro |def| (&body pattern-value-pairs)
+(defmacro/boot |def| (&body pattern-value-pairs)
   "Define a constant in the global lexical environment."
   (let* ((pairs (group 2 pattern-value-pairs)))
     `(eval-when (:compile-toplevel :load-toplevel :execute)
@@ -43,7 +109,7 @@
           pairs)
        |null|)))
 
-(defmacro |def*| (&body pattern-value-pairs)
+(defmacro/boot |def*| (&body pattern-value-pairs)
   "Define a global dynamic variable."
   (let* ((pairs (group 2 pattern-value-pairs)))
     `(progn
@@ -54,12 +120,11 @@
                  pairs)
        |null|)))
 
-(defmacro |defmacro| (name arg-list &body forms)
-  (let ((args (gensym)))
-    `(defmacro ,name (&rest ,args)
-       (cl:apply (fn ,arg-list ,@forms) ,args))))
+(defmacro/boot |defn| (name arg-list &body body)
+  "Define a function in the global lexical environment."
+  `(|def| ,name (|fn| ,arg-list ,@body)))
 
-(defmacro |defvar| (&body pattern-value-pairs)
+(defmacro/boot |defvar| (&body pattern-value-pairs)
   "Define a lexical variable."
   ;; same as def except we set the mutable flag to T
   (let* ((pairs (group 2 pattern-value-pairs)))
@@ -67,14 +132,7 @@
                       pairs)
             |null|)))
 
-(defmacro |defn| (name arg-list &body body)
-  "Define a function."
-  (if (symbolp name)
-      `(|def| ,name (|fn| ,arg-list . ,body))
-      (error "defn: name is not a symbol ~s" name)))
-
-
-(defmacro |let| (bindings &body body)
+(defmacro/boot |let| (bindings &body body)
   (let* ((pairs (group 2 bindings))
          (patterns (mapcar #'car pairs))
          (objs (mapcar #'cadr pairs)))
@@ -83,7 +141,7 @@
                          `(progn ,@body)
                          `(error "let: match failed"))))
 
-(defmacro |set!| (name value)
+(defmacro/boot |set!| (name value)
   "Update the value of a named variable"
   ;; For now, this is all we need
   `(setf ,name ,value))
@@ -93,8 +151,8 @@
 ;;; Booleans
 ;;;;;;
 
-(define-symbol-macro |true| '|true|)
-(define-symbol-macro |false| '|false|)
+(def-sym-macro/boot |true| '|true|)
+(def-sym-macro/boot |false| '|false|)
 
 (defun true-ish (x)
   (not (eq x |false|)))
@@ -108,42 +166,42 @@
       |true|
       |false|))
 
-(|defn| |is-bool| (x)
+(defn/boot |is-bool| (x)
   (rebool (or (eq x |true|)
               (eq x |false|))))
 
-(|defn| |not| (x)
+(defn/boot |not| (x)
         (if (true-ish x)
             |false|
             |true|))
 
-(defmacro |and| (&rest args)
+(defmacro/boot |and| (&rest args)
   (if args
       `(|if| ,(car args)
              (|and| ,@(cdr args))
              |false|)
       |true|))
 
-(defmacro |or| (&rest args)
+(defmacro/boot |or| (&rest args)
   (if args
       `(|if| ,(car args)
              |true|
              (|or| ,@(cdr args)))
       |false|))
 
-(|defn| |impl-=| (x0 & x)
+(defn/boot (|impl-=| "=") (x0 & x)
   {:curry 1}
   (rebool (apply #'equalp x0 x)))
-(|defn| |impl-<| (x0 & x)
+(defn/boot (|impl-<| "<") (x0 & x)
   {:curry 1}
   (rebool (apply #'< x0 x)))
-(|defn| |impl-<=| (x0 & x)
+(defn/boot (|impl-<=| "<=") (x0 & x)
   {:curry 1}
   (rebool (apply #'<= x0 x)))
-(|defn| |impl->| (x0 & x)
+(defn/boot (|impl->| ">") (x0 & x)
   {:curry 1}
   (rebool (apply #'> x0 x)))
-(|defn| |impl->=| (x0 & x)
+(defn/boot (|impl->=| ">=") (x0 & x)
   {:curry 1}
   (rebool (apply #'>= x0 x)))
 
@@ -152,26 +210,26 @@
 ;;; Control Flow
 ;;;;;;
 
-(defmacro |do| (&body forms)
+(defmacro/boot |do| (&body forms)
   `(progn
      |null|
      ,@forms))
 
-(defmacro |if| (test then else)
+(defmacro/boot |if| (test then else)
   `(if (true-ish ,test)
        ,then
        ,else))
 
 ;; FIXME: probably want to change this expansion so it's easier to understand
 ;; (a/o/t recursive expansion)
-(defmacro |cond| (&body clauses)
+(defmacro/boot |cond| (&body clauses)
   (if clauses
       `(|if| ,(car clauses)
              ,(cadr clauses)
              (|cond| ,@(cddr clauses)))
       |null|))
 
-(defmacro |case| (obj &body clauses)
+(defmacro/boot |case| (obj &body clauses)
   "Perform pattern matching on OBJ. Each clause is a pattern and expression
 pair. Patterns are tested in the order specified until the first match is found,
 at which point the expression of the clause is executed."
@@ -191,19 +249,19 @@ at which point the expression of the clause is executed."
 ;;; Schemas
 ;;;;;;
 
-(defmacro |new| (name &rest args)
+(defmacro/boot |new| (name &rest args)
   `(|new*| ',name ,@args))
 
-(|defn| |new*| (name & args)
+(defn/boot |new*| (name & args)
   (aif (gethash name schemas-by-name)
        (schema-construct it args)
        (error "new: unknown schema ~a" name)))
 
-(defun @ (i obj)
-    (let ((x (class-name (class-of obj))))
-      (aif (gethash x schemas-by-class)
-           (schema-get it obj i)
-           (error "@: ~a has unknown class" obj))))
+(defn/boot @ (i obj)
+  (let ((x (class-name (class-of obj))))
+    (aif (gethash x schemas-by-class)
+         (schema-get it obj i)
+         (error "@: ~a has unknown class" obj))))
 
 (defun (setf @) (v i obj)
   (let ((x (class-name (class-of obj))))
@@ -211,7 +269,7 @@ at which point the expression of the clause is executed."
          (schema-set it obj i v)
          nil)))
 
-(defmacro |defdata| (name arg-list)
+(defmacro/boot |defdata| (name arg-list)
   "Defines a new data-schema"
   `(progn
      (add-schema
@@ -239,31 +297,19 @@ at which point the expression of the clause is executed."
 ;;; Lists
 ;;;;;;
 
-(|defn| |list| (& args)
+(defn/boot |list| (& args)
         (apply #'list args))
 
-(|defn| |is-list| (x)
+(defn/boot |is-list| (x)
   (rebool (listp x)))
 
-(|defn| |cons| (hd & tl)
+(defn/boot |cons| (hd & tl)
   {:curry 1}
   (if (listp tl)
       (cons hd tl)
       (error "cons: tail must be a list")))
 
-(|defn| |head| (l)
-  (car l))
-
-(|defn| |tail| (l)
-  (cdr l))
-
-(|defn| |take| (n l)
-  (subseq l 0 (min (length l) n)))
-
-(|defn| |drop| (n l)
-  (nthcdr n l))
-
-(|defn| |last| (l)
+(defn/boot |last| (l)
   (car (last l)))
 
 (eval-when (:compile-toplevel :execute :load-toplevel)
@@ -309,25 +355,25 @@ at which point the expression of the clause is executed."
 ;;; Dicts
 ;;;;;;
 
-(|defn| |dict| (& kv-pairs)
+(defn/boot |dict| (& kv-pairs)
   (apply #'dict kv-pairs))
 
-(|defn| |is-dict| (x)
+(defn/boot |is-dict| (x)
   (rebool (is-dict x)))
 
-(|defn| |dict-keys| (d)
+(defn/boot |dict-keys| (d)
   (dict-keys d))
 
-(|defn| |dict-has-key| (d key)
+(defn/boot |dict-has-key| (d key)
   (rebool (dict-has-key d key)))
 
-(|defn| |dict-get| (d key)
+(defn/boot |dict-get| (d key)
   (dict-get d key))
 
-(|defn| |dict-conj| (dict key value)
+(defn/boot |dict-conj| (dict key value)
   (dict-conj dict key value))
 
-(|defn| |dict-extend| (dict0 & dicts)
+(defn/boot |dict-extend| (dict0 & dicts)
   (apply #'dict-extend dict0 dicts))
 
 (eval-when (:compile-toplevel :execute :load-toplevel)
@@ -370,17 +416,15 @@ at which point the expression of the clause is executed."
 ;;; Strings
 ;;;;;;
 
-(|defn| |string| (& printables)
+(defn/boot |string| (& printables)
   (apply #'concatenate
          'string
          (mapcar $(with-output-to-string (princ $)) printables)))
 
-(|def| |string| #'|string|)
-
-(|defn| |is-string| (x)
+(defn/boot |is-string| (x)
   (rebool (stringp x)))
 
-(|defn| |is-char| (x)
+(defn/boot |is-char| (x)
   (rebool (and (stringp x)
                (eql (length x) 1))))
 
@@ -417,13 +461,13 @@ at which point the expression of the clause is executed."
 ;;; Numbers
 ;;;;;;
 
-(|defn| |is-int| (x)
+(defn/boot |is-int| (x)
   (rebool (integerp x)))
 
-(|defn| |is-float| (x)
+(defn/boot |is-float| (x)
   (rebool (floatp x)))
 
-(|defn| |is-num| (x)
+(defn/boot |is-num| (x)
   (rebool (numberp x)))
 
 
@@ -431,19 +475,19 @@ at which point the expression of the clause is executed."
 ;;; Sequences (in lieu of a real protocol)
 ;;;;;;
 
-(|defn| |is-sequence| (seq)
+(defn/boot |is-sequence| (seq)
   (or (listp seq) (stringp seq) (is-dict seq)))
 
-(|defn| |length| (seq)
+(defn/boot |length| (seq)
   (cond
     ((or (vectorp seq) (listp seq)) (length seq))
     ((is-dict seq) (hash-table-count seq))
     (t (error "length: not a sequence: ~s" seq))))
 
-(|defn| |is-empty| (seq)
+(defn/boot |is-empty| (seq)
   (= (length seq) 0))
 
-(|defn| |as-list| (seq)
+(defn/boot |as-list| (seq)
   (cond
     ((listp seq) seq)
     ((stringp seq) (map 'list #'string seq))
@@ -467,7 +511,7 @@ at which point the expression of the clause is executed."
              (mapcar #'|as-list| (|as-list| seq))
              :initial-value {}))))
 
-(|defn| |head| (seq)
+(defn/boot |head| (seq)
   (cond ((listp seq) (car seq))
         ((stringp seq) (aref seq 0))
         ((is-dict seq)
@@ -475,13 +519,13 @@ at which point the expression of the clause is executed."
            (maphash $(return-from b [$0 $1]) seq)))
         (t (error "head: not a sequence"))))
 
-(|defn| |tail| (seq)
+(defn/boot |tail| (seq)
   (cond ((listp seq) (cdr seq))
         ((stringp seq) (subseq seq (min 1 (length seq))))
         ((is-dict seq) (match-seq-type {} (cdr (|as-list| seq))))
         (t (error "tail: not a sequence"))))
 
-(|defn| |split| (n seq)
+(defn/boot |split| (n seq)
   {:curry 1}
   (labels ((iter (acc tl m)
              (|if| (|and| (|not| (|is-empty| seq))
@@ -491,15 +535,15 @@ at which point the expression of the clause is executed."
                     (match-seq-type seq tl)])))
     (iter [] seq 0)))
 
-(|defn| |take| (n seq)
+(defn/boot |take| (n seq)
         {:curry 1}
         (subseq seq 0 (min n (length seq))))
 
-(|defn| |drop| (n seq)
+(defn/boot |drop| (n seq)
   {:curry 1}
   (subseq seq (min n (length seq))))
 
-(|defn| |split-when| (f seq)
+(defn/boot |split-when| (f seq)
   {:curry 1}
   (labels ((iter (acc tl)
              (|if| (funcall f (car tl))
@@ -508,7 +552,7 @@ at which point the expression of the clause is executed."
                     (match-seq-type seq tl)])))
     (iter [] seq)))
 
-(|defn| |take-while| (f seq)
+(defn/boot |take-while| (f seq)
   {:curry 1}
   (labels ((iter (acc tl)
              (|if| (funcall f (car tl))
@@ -516,24 +560,32 @@ at which point the expression of the clause is executed."
                    (match-seq-type seq (nreverse acc)))))
     (iter [] seq)))
 
-(|defn| |drop-while| (f seq)
+(defn/boot |drop-while| (f seq)
   {:curry 1}
   (if (funcall f (|head| seq))
       (|drop-while| f (|tail| seq))
       seq))
 
-(|defn| |map| (f seq)
+(defn/boot |map| (f seq)
   {:curry 1}
   (match-seq-type seq (mapcar f (|as-list| seq))))
 
-(|defn| |zip| (& seqs)
+(defn/boot |zip| (& seqs)
   (apply #'map 'list |list| (mapcar |as-list| seqs)))
+
+(defn/boot |filter| (f seq)
+  {:curry 1}
+  (match-seq-type seq (remove-if-not f (|as-list| seq))))
+
+(defn/boot |fold| (f init seq)
+  {:curry 2}
+  (match-seq-type seq (reduce f (|as-list| seq) :initial-value init)))
 
 
 ;;;;;;
 ;;; I/O stuff
 ;;;;;;
 
-(|defn| |print| (x)
+(defn/boot |print| (x)
   (princ x))
 
