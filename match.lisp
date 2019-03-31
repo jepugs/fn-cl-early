@@ -25,7 +25,7 @@
     (let ((x (destructure-arg-list (slot-value schema 'arg-list) pattern-args))
           (res {}))
       (block b
-        (maphash $(aif (pattern-match $1 (@ $0 obj))
+        (maphash $(aif (pattern-match $1 (schema-get schema obj $0))
                        (setf res (dict-extend res it))
                        (return-from b nil))
                  x)

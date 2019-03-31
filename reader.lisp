@@ -54,8 +54,8 @@
 (let ((*readtable* fn-readtable))
   (setf (readtable-case *readtable*) :preserve)
   (set-macro-character #\$ #'fn-$-reader t)
-  (set-del-reader #\[ #\] '|list|)
-  (set-del-reader #\{ #\} '|dict|)
+  (set-del-reader #\[ #\] '|List|)
+  (set-del-reader #\{ #\} '|Dict|)
   ;; imagine that: a lisp that doesn't abuse the hash character!
   (set-macro-character #\# nil)
   (set-macro-character #\| nil))

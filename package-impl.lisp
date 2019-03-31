@@ -1,5 +1,7 @@
 (defpackage :fn-impl
   (:use :common-lisp)
-  (:export :@ :$ :& :_ :and-then :def :defn :defschema :dict :fn :match :my-cond
-           :my-let :new))
+  (:export :boot-fn :unboot-fn :|unboot-fn| :fn-readtable :fn-read))
 
+(defpackage :|fn|
+  (:documentation "Built-in definitions for the fn programming language.")
+  (:nicknames :fn))
