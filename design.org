@@ -37,7 +37,6 @@
   on this count-- all type behavior can accessed with only 8 special operators, of which 3 are
   functions).
 
-
 ** Basics: Objects, Types, and Schemas
 
    Every value in fn is an object. Basically, this is anything you can assign a variable to. Every
@@ -233,6 +232,7 @@
 
 
 * Pattern Matching (TODO)
+
 
 * New argument lists
 

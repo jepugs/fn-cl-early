@@ -2,40 +2,13 @@
 
 
 ;;;;;;
-;;; Schema methods
+;;; Schema functions
 ;;;;;;
 
-(defgeneric schema-match (schema pattern-args obj)
-  (:documentation "Create a bindings object by doing pattern matching on obj.
-  Return NIL if the matching fails."))
-(defgeneric schema-pattern-vars (schema pattern-args)
-  (:documentation "Get the list of symbols that would be bound by successful
-  pattern matching on the given schema"))
-
-(defmethod schema-match ((schema general-schema) pattern-args obj)
-  (funcall (slot-value schema 'match) pattern-args obj))
-(defmethod schema-pattern-vars ((schema general-schema) pattern-args)
-  (aif (slot-value schema 'pattern-vars)
-       (funcall it pattern-args)
-       (mapcan #'schema-pattern-vars pattern-args)))
-
-(defmethod schema-match ((schema data-schema) pattern-args obj)
-  (when (eq (class-name (class-of obj)) ;check type first
-            (slot-value schema 'name))
-    (let ((x (destructure-arg-list (slot-value schema 'arg-list) pattern-args))
-          (res {}))
-      (block b
-        (maphash $(aif (pattern-match $1 (schema-get schema obj $0))
-                       (setf res (dict-extend res it))
-                       (return-from b nil))
-                 x)
-        res))))
-(defmethod schema-pattern-vars ((schema data-schema) pattern-args)
-  (let ((x (destructure-arg-list (slot-value schema 'arg-list)
-                                 pattern-args))
-        (res []))
-    (maphash $(setq res (append res (pattern-vars $1))) x)
-    res))
+(defun schema-match (schema pattern-args obj)
+  (funcall (slot-value schema 'matcher) pattern-args obj))
+(defun schema-pattern-vars (schema pattern-args)
+  (funcall (slot-value schema 'match-var-parser) pattern-args))
 
 
 ;;;;;;
@@ -64,10 +37,14 @@
           {}
           nil)))
 
+(defun is-wild (pattern)
+  "Tell if pattern is the wildcard"
+  (eq pattern fn-wildcard))
+
 (defun pattern-match (pattern obj)
   "Perform pattern matching and return either NIL (no match) or a bindings
 object."
-  (cond ((eq pattern '_) {})                              ;wildcard
+  (cond ((is-wild pattern) {})                              ;wildcard
         ((and (symbolp pattern) (not (keywordp pattern))) ;variable
          {pattern obj})
         ((is-literal pattern)           ; literal
@@ -91,7 +68,7 @@ object."
 
 (defun pattern-vars (pattern)
   "Makes a list of all variables that a pattern would bind."
-  (cond ((eq pattern '_) nil)
+  (cond ((is-wild pattern) nil)
         ((and (symbolp pattern)
               (not (keywordp pattern))
               (not (eq pattern '&)))

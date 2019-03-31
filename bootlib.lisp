@@ -39,8 +39,8 @@
 ;;; null type
 ;;;;;;
 
-(def-sym-macro/boot "null" '|fn|::|null|)
-(define-symbol-macro |null| '|fn|::|null|)
+(def-sym-macro/boot "Null" fn-null)
+
 
 ;;;;;;
 ;;; our eponymous function maker
@@ -48,15 +48,16 @@
 
 (defmacro/boot "fn" (arg-list &body body)
   "Like lambda, but with different argument list and support for options"
-  (let* ((lform `(lambda ,(convert-arg-list arg-list) |null| ,@body))
+  (make-fn arg-list body)
+  (let* ((lform `(lambda ,(convert-arg-list arg-list) fn-null ,@body))
          (lopt (get-options body)))
     ;; IMPLNOTE: if at all possible, implement new options by expanding the
     ;; pipeline before
     (->> lform
-      (funcall $(aif (dict-get lopt :memoize)
-                     `(memoize ,$)
-                     $))
-      (funcall $(aif (dict-get lopt :curry)
+      (funcall $(if (and (dict-get lopt :|memoize|))
+                    `(memoize ,$)
+                    $))
+      (funcall $(aif (dict-get lopt :|curry|)
                      (curry-transform it $)
                      $)))))
 
@@ -67,7 +68,7 @@
 
 (defmacro/boot "do" (&body forms)
   `(progn
-     |null|
+     fn-null
      ,@forms))
 
 (defmacro/boot "if" (test then else)
@@ -82,7 +83,7 @@
       `(|fn|::|if| ,(car clauses)
             ,(cadr clauses)
             (|fn|::|cond| ,@(cddr clauses)))
-      |null|))
+      fn-null))
 
 (defmacro/boot "case" (obj &body clauses)
   "Perform pattern matching on OBJ. Each clause is a pattern and expression
@@ -123,7 +124,7 @@
                            (lambda (k v)
                              `(define-lexically ,k ,v nil)))
           pairs)
-       |null|)))
+       fn-null)))
 
 (defmacro/boot "def*" (&body pattern-value-pairs)
   "Define a global dynamic variable."
@@ -134,7 +135,7 @@
                                   (lambda (k v)
                                     `(defparameter ,k ,v)))
                  pairs)
-       |null|)))
+       fn-null)))
 
 (defmacro/boot "defn" (name arg-list &body body)
   "Define a function in the global lexical environment."
@@ -146,7 +147,7 @@
   (let* ((pairs (group 2 pattern-value-pairs)))
     `(progn ,@(mapcar $`(define-lexically ,(car $) ,(cadr $) t)
                       pairs)
-            |null|)))
+            fn-null)))
 
 (defmacro/boot "let" (bindings &body body)
   (let* ((pairs (group 2 bindings))
@@ -167,60 +168,58 @@
 ;;; Booleans
 ;;;;;;
 
-(def-sym-macro/boot "true" 'fn::|true|)
-(def-sym-macro/boot "false" 'fn::|false|)
-(define-symbol-macro |true| 'fn::|true|)
-(define-symbol-macro |false| 'fn::|false|)
+(def-sym-macro/boot "True" fn-true)
+(def-sym-macro/boot "False" fn-false)
 
 (defun true-ish (x)
-  (not (eq x |false|)))
+  (not (eq x fn-false)))
 (defun false-ish (x)
-  (eq x |false|))
+  (eq x fn-false))
 
 (defun rebool (x)
   "Convert CL booleans to fn ones. Be careful using this, because it will
- interpret empty lists as false values and fn's |false| as a true value."
+ interpret empty lists as false values and fn's fn-false as a true value."
   (if x
-      |true|
-      |false|))
+      fn-true
+      fn-false))
 
 (defn/boot "is-bool" (x)
-  (rebool (or (eq x |true|)
-              (eq x |false|))))
+  (rebool (or (eq x fn-true)
+              (eq x fn-false))))
 
 (defn/boot "not" (x)
   (if (true-ish x)
-      |false|
-      |true|))
+      fn-false
+      fn-true))
 
 (defmacro/boot "and" (&rest args)
   (if args
       `(|fn|::|if| ,(car args)
             (|fn|::|and| ,@(cdr args))
-            |false|)
-      |true|))
+            fn-false)
+      fn-true))
 
 (defmacro/boot "or" (&rest args)
   (if args
       `(|fn|::|if| ,(car args)
-            |true|
+            fn-true
             (|fn|::|or| ,@(cdr args)))
-      |false|))
+      fn-false))
 
 (defn/boot "=" (x0 & x)
-  {:curry 1}
+  {:|curry| 1}
   (rebool (apply #'equalp x0 x)))
 (defn/boot "<" (x0 & x)
-  {:curry 1}
+  {:|curry| 1}
   (rebool (apply #'< x0 x)))
 (defn/boot "<=" (x0 & x)
-  {:curry 1}
+  {:|curry| 1}
   (rebool (apply #'<= x0 x)))
 (defn/boot ">" (x0 & x)
-  {:curry 1}
+  {:|curry| 1}
   (rebool (apply #'> x0 x)))
 (defn/boot ">=" (x0 & x)
-  {:curry 1}
+  {:|curry| 1}
   (rebool (apply #'>= x0 x)))
 
 
@@ -228,53 +227,24 @@
 ;;; Schemas
 ;;;;;;
 
-(defmacro/boot "new" (name &rest args)
-  `(|new*| ',name ,@args))
+(defn/boot "new" (name & args)
+  (new name args))
 
-(defn/boot "new*" (name & args)
-  (aif (gethash name schemas-by-name)
-       (schema-construct it args)
-       (error "new: unknown schema ~a" name)))
+(defn/boot "slot-value" (object slot)
+  (internal-slot-value object slot))
 
-(defn/boot "@" (i obj)
-  (let ((x (class-name (class-of obj))))
-    (aif (gethash x schemas-by-class)
-         (schema-get it obj i)
-         (error "@: ~a has unknown class" obj))))
+(defun (setf |fn|::|slot-value|) (value object slot)
+  (set-internal-slot object slot value))
 
-(defun (setf |fn|::@) (v i obj)
-  (let ((x (class-name (class-of obj))))
-    (aif (gethash x schemas-by-class)
-         (schema-set it obj i v)
-         nil)))
+(defn/boot "@" (object slot)
+  (external-slot-value object slot))
 
-(defmacro/boot "defdata" (name arg-list)
+(defun (setf |fn|::@) (value object slot)
+  (set-external-slot object slot value))
+
+(defmacro/boot "defdata" (name arg-list &body body)
   "Defines a new data-schema"
-  `(progn
-     ;; constructor
-     (|fn|::|defn| ,name ,arg-list
-       (make-instance
-        ',name
-        :contents {,@(data-args-gen arg-list)}))
-     ;; schema
-     (add-schema
-      (make-instance
-       'data-schema
-       :name ',name
-       :data-classes [',name]
-       :arg-list ',arg-list
-       :construct ,name
-       :slots (arg-list-vars ',arg-list)
-       :options []))
-     ;; internal representation
-     (defclass ,name (data-instance)
-       ((schema :initform (gethash 'name schemas-by-name))))
-     ;; printer
-     (defmethod print-object ((object ,name) stream)
-       (format stream "(~s" ',name)
-       ,@(mapcar $`(format stream " '~s ~s " ',$ (|fn|::@ ',$ object))
-                 (arg-list-vars arg-list))
-       (write-char #\) stream))))
+  (expand-defdata name arg-list body))
 
 
 ;;;;;;
@@ -288,7 +258,7 @@
   (rebool (listp x)))
 
 (defn/boot "cons" (hd & tl)
-  {:curry 1}
+  {:|curry| 1}
   (if (listp tl)
       (cons hd tl)
       (error "cons: tail must be a list")))
@@ -299,40 +269,40 @@
 (push
  `(add-schema
    (make-instance
-    'general-schema
+    'schema
     :name '|fn|::|List|
-    :data-classes '(cons list null)
-    :construct |fn|::|List|
-    :get (lambda (instance slot)
-           (declare (type integer slot)
-                    (type list instance))
-           (nth slot instance))
-    :set (lambda (instance slot value)
-           (declare (type list instance)
-                    (type integer slot))
-           (setf (nth slot instance) value))
-    :match (lambda (pattern-args obj)
-             (when (listp obj)
-               (rlambda (res a* x*) ({}  pattern-args obj)
-                 (cond ((null a*) (if (null x*)
-                                      res
-                                      nil))
-                       ((eq (car a*) '&)
-                        (unless (eq (length a*) 2)
-                          (error "list matching: wrong arguments after &~s"
-                                 (cdr a*)))
-                        (aif (pattern-match (cadr a*) x*)
-                             (dict-extend res it)
-                             nil))
-                       ((null x*) nil)
-                       (t (aif (pattern-match (car a*) (car x*))
-                               (recur (dict-extend res it)
-                                      (cdr a*)
-                                      (cdr x*))
-                               nil))))))
-    :pattern-vars (lambda (pattern-args)
-                    (mapcan #'pattern-vars
-                            (remove-if $(eq $ '&) pattern-args)))))
+    :classes '(cons list null)
+    :instantiator |fn|::|List|
+    :getter (lambda (instance slot)
+              (declare (type integer slot)
+                       (type list instance))
+              (nth slot instance))
+    :setter (lambda (instance slot value)
+              (declare (type list instance)
+                       (type integer slot))
+              (setf (nth slot instance) value))
+    :matcher (lambda (pattern-args obj)
+               (when (listp obj)
+                 (rlambda (res a* x*) ({}  pattern-args obj)
+                   (cond ((null a*) (if (null x*)
+                                        res
+                                        nil))
+                         ((eq (car a*) '&)
+                          (unless (eq (length a*) 2)
+                            (error "list matching: wrong arguments after &~s"
+                                   (cdr a*)))
+                          (aif (pattern-match (cadr a*) x*)
+                               (dict-extend res it)
+                               nil))
+                         ((null x*) nil)
+                         (t (aif (pattern-match (car a*) (car x*))
+                                 (recur (dict-extend res it)
+                                        (cdr a*)
+                                        (cdr x*))
+                                 nil))))))
+    :match-var-parser (lambda (pattern-args)
+                        (mapcan #'pattern-vars
+                                (remove-if $(eq $ '&) pattern-args)))))
  bootlib-defs)
 
 
@@ -364,32 +334,32 @@
 (push
  `(add-schema
    (make-instance
-    'general-schema
+    'schema
     :name '|fn|::|Dict|
-    :data-classes '(hash-table)
-    :construct |fn|::|Dict|
-    :get (lambda (instance slot)
-           (declare (type dict instance))
-           (dict-get instance slot))
-    :set (lambda (instance slot value)
-           (declare (type dict instance))
-           (setf (dict-get instance slot) value))
-    :match (lambda (pattern-args obj)
-             (when (is-dict obj)
-               ;; this generates an error when there are illegal args
-               (let ((x (apply #'dict pattern-args))
-                     (res {}))
-                 (block b
-                   (maphash $(aif (pattern-match $1 (dict-get obj $0))
-                                  (setq res (dict-extend res it))
-                                  (return-from b nil))
-                            x)
-                   res))))
-    :pattern-vars (lambda (pattern-args)
-                    (let ((pairs (group 2 pattern-args)))
-                      (unless (= (length (car (last pairs))) 2)
-                        (error "dict pattern: Odd number of args"))
-                      (mapcan $(pattern-vars (cadr $)) pairs)))))
+    :classes '(hash-table)
+    :instantiator |fn|::|Dict|
+    :getter (lambda (instance slot)
+              (declare (type dict instance))
+              (dict-get instance slot))
+    :setter (lambda (instance slot value)
+              (declare (type dict instance))
+              (setf (dict-get instance slot) value))
+    :matcher (lambda (pattern-args obj)
+               (when (is-dict obj)
+                 ;; this generates an error when there are illegal args
+                 (let ((x (apply #'dict pattern-args))
+                       (res {}))
+                   (block b
+                     (maphash $(aif (pattern-match $1 (dict-get obj $0))
+                                    (setq res (dict-extend res it))
+                                    (return-from b nil))
+                              x)
+                     res))))
+    :match-var-parser (lambda (pattern-args)
+                        (let ((pairs (group 2 pattern-args)))
+                          (unless (= (length (car (last pairs))) 2)
+                            (error "dict pattern: Odd number of args"))
+                          (mapcan $(pattern-vars (cadr $)) pairs)))))
  bootlib-defs)
 
 ;; dict pattern is
@@ -416,31 +386,31 @@
 
 (push
  '(add-schema
-   (make-instance 'general-schema
+   (make-instance 'schema
                   :name '|fn|::|String|
-                  :data-classes '(string)
-                  :construct |fn|::|String|
-                  :get (lambda (instance slot)
-                         (declare (type string instance)
-                                  (type integer slot))
-                         (aref instance slot))
-                  :set (lambda (instance slot value)
-                         (declare (type string instance)
-                                  (type integer slot)
-                                  (type string value))
-                         (concatenate 'string
-                                      (subseq instance 0 slot)
-                                      value
-                                      (if (< slot (- (length instance) 1))
-                                          (subseq instance (+ slot 1))
-                                          "")))
-                  :match (lambda (pattern-args obj)
-                           (declare (ignore obj))
-                           (error "String pattern is unimplemented: ~a"
-                                  `(string ,@pattern-args)))
-                  :pattern-vars (lambda (pattern-args)
-                                  (declare (ignore pattern-args))
-                                  nil)))
+                  :classes '(string)
+                  :instantiator |fn|::|String|
+                  :getter (lambda (instance slot)
+                            (declare (type string instance)
+                                     (type integer slot))
+                            (aref instance slot))
+                  :setter (lambda (instance slot value)
+                            (declare (type string instance)
+                                     (type integer slot)
+                                     (type string value))
+                            (concatenate 'string
+                                         (subseq instance 0 slot)
+                                         value
+                                         (if (< slot (- (length instance) 1))
+                                             (subseq instance (+ slot 1))
+                                             "")))
+                  :matcher (lambda (pattern-args obj)
+                             (declare (ignore obj))
+                             (error "String pattern is unimplemented: ~a"
+                                    `(string ,@pattern-args)))
+                  :match-var-parser (lambda (pattern-args)
+                                      (declare (ignore pattern-args))
+                                      nil)))
  bootlib-defs)
 
 
@@ -458,19 +428,19 @@
   (rebool (numberp x)))
 
 (defn/boot "+" (x0 & x)
-  {:curry 1}
+  {:|curry| 1}
   (apply #'+ x0 x))
 (defn/boot "-" (x0 & x)
-  {:curry 1}
+  {:|curry| 1}
   (apply #'- x0 x))
 (defn/boot "*" (x0 & x)
-  {:curry 1}
+  {:|curry| 1}
   (apply #'* x0 x))
 (defn/boot "/" (x0 & x)
-  {:curry 1}
+  {:|curry| 1}
   (apply #'/ x0 x))
 (defn/boot "mod" (n d)
-  {:curry 1}
+  {:|curry| 1}
   (mod n d))
 
 
@@ -529,7 +499,7 @@
         (t (error "tail: not a sequence"))))
 
 (defn/boot "split" (n seq)
-  {:curry 1}
+  {:|curry| 1}
   (labels ((iter (acc tl m)
              (|fn|::|if| (|fn|::|and| (|fn|::|not| (|fn|::|is-empty| seq))
                               (|fn|::|<| m n))
@@ -539,15 +509,15 @@
     (iter [] seq 0)))
 
 (defn/boot "take" (n seq)
-  {:curry 1}
+  {:|curry| 1}
   (subseq seq 0 (min n (length seq))))
 
 (defn/boot "drop" (n seq)
-  {:curry 1}
+  {:|curry| 1}
   (subseq seq (min n (length seq))))
 
 (defn/boot "split-when" (f seq)
-  {:curry 1}
+  {:|curry| 1}
   (labels ((iter (acc tl)
              (|fn|::|if| (funcall f (car tl))
                   (iter (cons (car tl) acc) (cdr tl))
@@ -556,7 +526,7 @@
     (iter [] seq)))
 
 (defn/boot "take-while" (f seq)
-  {:curry 1}
+  {:|curry| 1}
   (labels ((iter (acc tl)
              (|fn|::|if| (funcall f (car tl))
                   (iter (cons (car tl) acc) (cdr tl))
@@ -564,26 +534,26 @@
     (iter [] seq)))
 
 (defn/boot "drop-while" (f seq)
-  {:curry 1}
+  {:|curry| 1}
   (|fn|::|cond|
     (|fn|::|is-empty| seq) seq
     (funcall f (|fn|::|head| seq))
       (|fn|::|drop-while| f (|fn|::|tail| seq))
-    |fn|::|true| seq))
+    fn-true seq))
 
 (defn/boot "map" (f seq)
-  {:curry 1}
+  {:|curry| 1}
   (match-seq-type seq (mapcar f (as-list seq))))
 
 (defn/boot "zip" (& seqs)
   (apply #'map 'list #'list (mapcar #'as-list seqs)))
 
 (defn/boot "filter" (f seq)
-  {:curry 1}
+  {:|curry| 1}
   (match-seq-type seq (remove-if-not f (as-list seq))))
 
 (defn/boot "fold" (f init seq)
-  {:curry 2}
+  {:|curry| 2}
   (match-seq-type seq (reduce f (as-list seq) :initial-value init)))
 
 

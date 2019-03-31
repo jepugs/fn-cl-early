@@ -56,14 +56,14 @@
        (or (is-pos-arg arg)
            (is-opt-arg arg))))
 
-(defun make-args (a*)
-  "Make an args object from an args-list a*"
+(defun make-args (arg-list)
+  "Make an args object from an args-list arg-list"
   (mapc
    $(when (member $ '(&rest &whole &body &key &optional))
       ;; the user /probably/ made a mistake; this causes whacky behavior
       (warn "FN lambda lists don't understand ~a arguments~%" $))
-   a*)
-  (let* ((pos-and (split-if (complement #'is-pos-arg) a*))
+   arg-list)
+  (let* ((pos-and (split-if (complement #'is-pos-arg) arg-list))
          (opt-and (split-if (complement #'is-opt-arg) (cadr pos-and)))
          (pos (car pos-and))            ;positional args
          (opt (car opt-and))            ;optional args
@@ -96,9 +96,9 @@
                          :has-kw (and kw* t)
                          :has-rest nil)))))
 
-(defun convert-arg-list (a*)
+(defun convert-arg-list (arg-list)
   "Convert an FN-style arg-list to a Common Lisp one"
-  (with-slots (pos opt kw rest has-kw has-rest) (make-args a*)
+  (with-slots (pos opt kw rest has-kw has-rest) (make-args arg-list)
     (labels ((fix-key (k)         ;make key arguments suit CL
                (if (listp (cadr k))
                    ;; with default value
@@ -119,7 +119,10 @@
   (with-slots (pos opt kw rest) x
     (nconc pos
            (mapcar #'car opt)
-           (mapcar #'cadr kw)
+           (mapcar $(if (listp (cadr $))
+                        (caadr $)
+                        (cadr $))
+                   kw)
            (if rest [rest] []))))
 
 (defun destruct-pos-opt (pos-opt l)
@@ -127,19 +130,19 @@
  in l. Emits an error if there are not enough elements in l. pos-opt is a list
  of positional and optional argument forms. Returns a dictionary of the mapping
  and all arguments after matching."
-  (rlambda (res a* x*) ({} pos-opt l)
-    (let ((name (if (listp (car a*))  ;will be NIL if a* = NIL
-                    (caar a*)
-                    (car a*))))
-      (cond ((null a*) (list res x*))
+  (rlambda (res arg-list x*) ({} pos-opt l)
+    (let ((name (if (listp (car arg-list))  ;will be NIL if arg-list = NIL
+                    (caar arg-list)
+                    (car arg-list))))
+      (cond ((null arg-list) (list res x*))
             ((null x*)                ;still have args after exhausting the list
-             (if (listp (car a*))     ;check for default form
-                 (recur (dict-conj res name (cadar a*))
-                        (cdr a*)
+             (if (listp (car arg-list))     ;check for default form
+                 (recur (dict-conj res name (cadar arg-list))
+                        (cdr arg-list)
                         [])
                  (error "destruct-pos-opt: not enough positional arguments")))
             (t
-             (recur (dict-conj res name (car x*)) (cdr a*) (cdr x*)))))))
+             (recur (dict-conj res name (car x*)) (cdr arg-list) (cdr x*)))))))
 
 (defun destruct-kw (kw l)
   "Helper function that matches keyword args to values in l."
@@ -153,29 +156,30 @@
           pairs)
     ;; make
     (reduce (lambda (res k)
-              (aif (assoc (car k) pairs)              ;look for key
-                   (dict-conj res (cadr k) (cadr it)) ;use value from l
-                   (if (is-opt-arg (cdr k))           ;check for default value
-                       (dict-conj res (cadr k) (caddr k))
-                       (error
-                        "destruct-kw: Missing required keyword argument ~s"
-                        k))))
+              (let ((name (if (is-opt-arg (cadr k))
+                              (caadr k)
+                              (cadr k))))
+                (aif (assoc (car k) pairs)             ;look for key
+                     (dict-conj res name (cadr it))    ;use value from l
+                     (if (is-opt-arg (cadr k))         ;check for default value
+                         (dict-conj res name (cadadr k))
+                         (error "destruct-kw: Missing required keyword argument ~s" k)))))
             kw
             :initial-value {})))
 
 ;; ;; here's what this looks like in fn (gotta keep eyes on the prize)
 ;; (defn destruct-pos-opt (pos-opt l)
-;;   (rloop (res a* x*) ({} pos-opt l)
-;;     (case a*
+;;   (rloop (res arg-list x*) ({} pos-opt l)
+;;     (case arg-list
 ;;       [] [res x*]                       ;no more args
 ;;       [[a v] _]                         ;optional
 ;;         (recur (dict-conj res a (if x* (head x*) v))
-;;                (tail a*)
+;;                (tail arg-list)
 ;;                (tail x*))
 ;;       [a & _]                           ;non-optional
 ;;         (if x*
 ;;             (recur (dict-conj res a (head x*))
-;;                    (tail a*)
+;;                    (tail arg-list)
 ;;                    (tail x*))
 ;;             (error "destruct-pos-opt: missing positional arguments")))))
 
@@ -193,14 +197,25 @@
                        error-val
                        (error "destruct-arg-obj: extra arguments ~s" l0))))))))
 
-(defun arg-list-vars (a*)
+(defun arg-list-vars (arg-list)
   "Get the variable bound by an FN-style args list"
-  (arg-obj-vars (make-args a*)))
+  (arg-obj-vars (make-args arg-list)))
 
-(defun destructure-arg-list (a* l &optional (error-val nil))
+(defun destructure-arg-list (arg-list l &optional (error-val nil))
   "Create a key-value pairing of symbols named in args and values in l"
-  (destruct-arg-obj (make-args a*) l error-val))
+  (destruct-arg-obj (make-args arg-list) l error-val))
 
+(defun replace-vars (arg-list bindings)
+  "Substitute the variables names in an arg-list with their values based on args."
+  (mapcar (lambda (arg-form)
+            (cond ((keywordp arg-form) arg-form)
+                  ((eq arg-form '&) arg-form)
+                  ((listp arg-form)
+                   (if (dict-has-key bindings (car arg-form))
+                       (dict-get bindings (car arg-form))
+                       (cadr arg-form)))
+                  (t (dict-get bindings arg-form))))
+          arg-list))
 
 ;;;;;;
 ;;; Function transformation and fn macro
@@ -211,16 +226,16 @@
 ;; - :memoize (INT or BOOL)
 ;; - :doc STR (unused)
 ;; - :argdoc STR (unused)
-(defparameter fn-default-options (dict :curry nil
-                                       :memoize nil
-                                       :doc ""
-                                       :argdoc ()))
+(defparameter fn-default-options (dict :|curry| nil
+                                       :|memoize| nil
+                                       :|doc| ""
+                                       :|argdoc| ()))
 
 (defun has-options (fn-body)
   "Returns true when fn-body starts with an options dict."
   (and (>= (length fn-body) 2)
        (listp (car fn-body))
-       (eq (caar fn-body) 'dict)))
+       (eq (caar fn-body) '|fn|::|Dict|)))
 
 (defun get-options (fn-body)
   "Get the options from an fn-body by merging the fn-body arguments with the
@@ -250,16 +265,36 @@
 (defun curry-transform (curry-times lambda-form)
   "Wrap a lambda form to automatically curry the first several arguments."
   (declare (type integer curry-times))
-  (let ((a* (gensym))
+  (let ((arg-list (gensym))
         (b* (gensym))
         (f (gensym))
         (self (gensym)))
     `(let ((,f ,lambda-form))
-       (labels ((,self (&rest ,a*)
-                  (if (<= (length ,a*) ,curry-times)
+       (labels ((,self (&rest ,arg-list)
+                  (if (<= (length ,arg-list) ,curry-times)
                       (lambda (&rest ,b*)
-                        (apply #',self (append ,a* ,b*)))
-                      (apply ,f ,a*))))
+                        (apply #',self (append ,arg-list ,b*)))
+                      (apply ,f ,arg-list))))
          #',self))))
 
+(defun curry (curry-times f)
+  (lambda (& args)
+    (if (<= (length args) curry-times)
+        (curry (- curry-times (length args))
+               (lambda (& args2)
+                 (apply #'f (append args args2))))
+        (apply f args))))
 
+(defun make-fn (arg-list body)
+  "Generate a LAMBDA form from an fn form."
+  (let* ((lform `(lambda ,(convert-arg-list arg-list) fn-null ,@body))
+         (lopt (get-options body)))
+    ;; IMPLNOTE: if at all possible, implement new options by expanding the
+    ;; pipeline before
+    (->> lform
+      (funcall $(aif (dict-get lopt :|memoize|)
+                     `(memoize ,$)
+                     $))
+      (funcall $(aif (dict-get lopt :|curry|)
+                     `(curry it ,$)
+                     $)))))

@@ -13,6 +13,7 @@
   :components ((:file "package-impl")
                (:file "macros")
                (:file "dict")
+               (:file "constants")
                (:file "schema")
                (:file "match")
                (:file "lexical")

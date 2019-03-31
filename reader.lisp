@@ -54,10 +54,12 @@
 (let ((*readtable* fn-readtable))
   (setf (readtable-case *readtable*) :preserve)
   (set-macro-character #\$ #'fn-$-reader t)
-  (set-del-reader #\[ #\] '|List|)
-  (set-del-reader #\{ #\} '|Dict|)
+  (set-del-reader #\[ #\] '|fn|::|List|)
+  (set-del-reader #\{ #\} '|fn|::|Dict|)
   ;; imagine that: a lisp that doesn't abuse the hash character!
   (set-macro-character #\# nil)
+  ;; dotted lists are actually the devil
+  (set-macro-character #\. nil)
   (set-macro-character #\| nil))
 
 (defun fn-read (&optional (stream *standard-input*))
