@@ -11,8 +11,7 @@
 (add-to-list 'auto-mode-alist '("\\.fn\\'" . fn-mode))
 
 (defvar fn-definers
-  '("def" "def*" "defdata" "defimpl" "defmacro" "defn"
-    "defproto" "defvar")
+  '("def" "def*" "defimpl" "defmacro" "defn" "defproto" "deftype" "defvar")
   "Definer forms have syntax highlighting on the operator and the
  first argument. Their bodies are indented two spaces past the
  previous one.")
@@ -20,7 +19,7 @@
   '("@" "and" "case" "cond" "do" "if" "fn" "let" "new" "or" "progn" "set!")
   "Special operators that have their names highlighted")
 (defvar fn-constants
-  '("$" "$0" "$1" "$2" "$3" "$4" "$5" "&" "true" "false" "null" "_"))
+  '("$" "$0" "$1" "$2" "$3" "$4" "$5" "&" "True" "False" "Null" "_"))
 
 ;; indentation specifiers for certain operators
 (defvar fn-operator-indent-alist
@@ -28,11 +27,11 @@
     ("cond" 1 cycle 2 4)
     ("def" 1 cycle 2 4)
     ("def*" 1 cycle 2 4)
-    ("defdata" 1 4 4 . 2)
-    ("defimpl" 1 4 . 2)
+    ("deftype" 1 4 4 cycle 2 4)
+    ("defimpl" 1 4 4 cycle 2 4)
     ("defmacro" 1 4 . 2)
     ("defn" 1 4 4 . 2)
-    ("defproto" 1 4 4 . 2)
+    ("defproto" 1 4 4 cycle 2 4)
     ("defvar" 1 cycle 2 4)
     ("do" 1 . 2)
     ("if" 1 4 2 . 2)

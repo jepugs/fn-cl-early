@@ -1,5 +1,6 @@
 (defpackage :fn-impl
   (:use :common-lisp)
+  (:shadow type)
   (:export :boot-fn :unboot-fn :|unboot-fn| :fn-readtable :fn-read))
 
 (defpackage :|fn|

@@ -10,11 +10,11 @@
   :license "GPL v3.0"
   :description "fn Programming Language"
   :serial t
-  :components ((:file "package-impl")
+  :components ((:file "package")
                (:file "macros")
                (:file "dict")
                (:file "constants")
-               (:file "schema")
+               (:file "type")
                (:file "match")
                (:file "lexical")
                (:file "fn")

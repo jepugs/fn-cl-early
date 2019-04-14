@@ -57,6 +57,12 @@
         (apply #'dict-extend dict1 (cdr dicts)))
       dict0))
 
+(defun dict->list (d)
+  (let (res)
+    (maphash (lambda (k v)
+               (push (list k v) res))
+             d)
+    (nreverse res)))
 
 (deftype dict () 'hash-table)
 

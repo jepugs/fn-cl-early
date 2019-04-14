@@ -58,8 +58,8 @@
   (set-del-reader #\{ #\} '|fn|::|Dict|)
   ;; imagine that: a lisp that doesn't abuse the hash character!
   (set-macro-character #\# nil)
-  ;; dotted lists are actually the devil
-  (set-macro-character #\. nil)
+  ;; dotted lists are actually the devil but apparently this breaks reading floating point numbers
+  ;;(set-macro-character #\. nil)
   (set-macro-character #\| nil))
 
 (defun fn-read (&optional (stream *standard-input*))

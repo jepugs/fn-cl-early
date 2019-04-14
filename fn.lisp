@@ -264,7 +264,7 @@
 ;;; declarations
 (defun curry-transform (curry-times lambda-form)
   "Wrap a lambda form to automatically curry the first several arguments."
-  (declare (type integer curry-times))
+  (declare (cl:type integer curry-times))
   (let ((arg-list (gensym))
         (b* (gensym))
         (f (gensym))

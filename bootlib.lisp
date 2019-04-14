@@ -90,7 +90,7 @@
  pair. Patterns are tested in the order specified until the first match is found,
  at which point the expression of the clause is executed."
   (let ((obj-var (gensym))
-        (bid (gensym))
+        (bid (gensym)) 
         (res (gensym)))
     `(let ((,obj-var ,obj))
        (block ,bid
@@ -227,24 +227,24 @@
 ;;; Schemas
 ;;;;;;
 
-(defn/boot "new" (name & args)
-  (new name args))
+(defn/boot "instantiate" (name & args)
+  (instantiate name args))
 
 (defn/boot "slot-value" (object slot)
-  (internal-slot-value object slot))
+  (fn-slot-value object slot))
 
 (defun (setf |fn|::|slot-value|) (value object slot)
-  (set-internal-slot object slot value))
+  (set-slot object slot value))
 
 (defn/boot "@" (object slot)
-  (external-slot-value object slot))
+  (index-value object slot))
 
-(defun (setf |fn|::@) (value object slot)
-  (set-external-slot object slot value))
+(defun (setf |fn|::@) (value object index)
+  (set-index object index value))
 
-(defmacro/boot "defdata" (name arg-list &body body)
+(defmacro/boot "deftype" (name arg-list &body body)
   "Defines a new data-schema"
-  (expand-defdata name arg-list body))
+  (expand-deftype name arg-list body))
 
 
 ;;;;;;
@@ -267,20 +267,22 @@
   (car (last l)))
 
 (push
- `(add-schema
+ `(add-type
    (make-instance
-    'schema
+    'type
     :name '|fn|::|List|
-    :classes '(cons list null)
+    :slots ()
+    :immutable nil
     :instantiator |fn|::|List|
-    :getter (lambda (instance slot)
-              (declare (type integer slot)
-                       (type list instance))
-              (nth slot instance))
-    :setter (lambda (instance slot value)
-              (declare (type list instance)
-                       (type integer slot))
-              (setf (nth slot instance) value))
+    :constructor |fn|::|List|
+    :getter (lambda (obj index)
+              (declare (cl:type list obj)
+                       (cl:type integer index))
+              (nth index obj))
+    :setter (lambda (obj index value)
+              (declare (cl:type list obj)
+                       (cl:type integer index))
+              (setf (nth index obj) value))
     :matcher (lambda (pattern-args obj)
                (when (listp obj)
                  (rlambda (res a* x*) ({}  pattern-args obj)
@@ -300,9 +302,10 @@
                                         (cdr a*)
                                         (cdr x*))
                                  nil))))))
-    :match-var-parser (lambda (pattern-args)
-                        (mapcan #'pattern-vars
-                                (remove-if $(eq $ '&) pattern-args)))))
+    :match-vars (lambda (pattern-args)
+                  (mapcan #'pattern-vars
+                          (remove-if $(eq $ '&) pattern-args))))
+   '(cons list null))
  bootlib-defs)
 
 
@@ -339,10 +342,10 @@
     :classes '(hash-table)
     :instantiator |fn|::|Dict|
     :getter (lambda (instance slot)
-              (declare (type dict instance))
+              (declare (cl:type dict instance))
               (dict-get instance slot))
     :setter (lambda (instance slot value)
-              (declare (type dict instance))
+              (declare (cl:type dict instance))
               (setf (dict-get instance slot) value))
     :matcher (lambda (pattern-args obj)
                (when (is-dict obj)
@@ -391,13 +394,13 @@
                   :classes '(string)
                   :instantiator |fn|::|String|
                   :getter (lambda (instance slot)
-                            (declare (type string instance)
-                                     (type integer slot))
+                            (declare (cl:type string instance)
+                                     (cl:type integer slot))
                             (aref instance slot))
                   :setter (lambda (instance slot value)
-                            (declare (type string instance)
-                                     (type integer slot)
-                                     (type string value))
+                            (declare (cl:type string instance)
+                                     (cl:type integer slot)
+                                     (cl:type string value))
                             (concatenate 'string
                                          (subseq instance 0 slot)
                                          value

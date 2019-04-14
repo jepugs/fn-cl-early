@@ -1,3 +1,12 @@
+* Terminology (in progress: port from glossary)
+
+- function :: A function is a callable subroutine which make take arguments and returns a value.
+              All subroutines in fn are functions. For the usual mathematical definition of a
+              function, we use *mapping*.
+- mapping :: A mapping in the mathematical sense; that is, a correspondence from elements of one set
+             (the *domain*) to another (the *range*). For our purposes, every element in the
+             *domain* maps to a single (not necessarily unique) element in the *range*.
+
 * Basic Facts
 
   fn is a programming language. It's qualities are
@@ -601,4 +610,148 @@ by the time we hit 1.0.
    - regex in the standard library
    - package/module manager
    - web server
+
+
+* Object System
+
+** What's an object
+
+An *object* in fn is a generalized key-value store. This means that majority of object system
+functionality is exposed via two operations, *getting* and *setting*. Getting is exposed via the ~(@
+<OBJ> <KEY>)~ special form, while setting is exposed via the ~(set! (@ <OBJECT> <KEY>) <VALUE>)~
+special form, and these are referred to respectively as the *generic getter* and *generic setter*,
+or collectively as the *generic accessors*.
+
+Every *object* in fn is described by a single *type*, which defines the behavior of the generic
+accessor on the object, as well as the internal representation. Types also specify object
+construction and pattern matching behavior, (see below). The functions which implement generic
+accessor behavior are referred to as the type's *getter* and *setter* respectively.
+
+This is where objects diverge from normal key-value stores. The getter and setter of a type may be
+any general functions which accept the correct arguments. That is, the getter must take two
+arguments: an instance of the corresponding type and an object representing a key. Likewise, the
+setter must accept three arguments: an instance, a key, and a new value to "store" with that key.
+
+The keys which a type's accessors accept are called *gettable indices* and the *settable indices*.
+Most objects are either immutable, meaning they have are no settable indices, or else have the same
+settable and gettable indices. In both of these cases, we refer to the keys simply as *indices*
+convenience. (The singular form of indices is *index*).
+
+The majority of user-defined objects should behave like normal key-value stores. The ~deftype~
+operator, which is used to define new types, automatically implements this behavior if no accessors
+are specified.
+
+
+*** Internal Representation, Instantiation, & Construction
+
+With the exception of certain built-in types and foreign types[1], every object is internally
+represented by a true key-value store. For lack of a better name, we call the keys in this structure
+*internal slots*. In order to minimize confusion, we will never, ever abbreviate this as *slots*.
+Internal slots are accessed using the special operator ~(internal-slot-value <obj> <key>)~. Internal
+slots access should be completely abstracted away in library code, and as a rule of thumb, you
+should only access the internal slots of objects which you've defined yourself.
+
+To create an instance of a type, you must at minimum provide values for the internal slots. This is
+called *instantiation*, and is done using the ~(instantiate <TYPE-NAME> & <INTERNAL-SLOT-VALUES>)~
+special form. As with ~internal-slot-value~, ~instantiate~ should only be used sparingly and within
+library code.
+
+With some exceptions (see "Uninstantiable & Unconstrible Types"), every type also has a
+*constructor*, which is a function that invokes instantiate to create instances of the object.
+Constructors share a name with their type, e.g. the ~List~ type is constructed by ~(List ...)~. The
+purpose of the constructor is to wrap the instantiate form so that implementation details can be
+abstracted away. A constructor may, for instance, allow variable numbers of arguments to be passed
+to a container data type.
+
+[1] foreign types coming soon
+
+**** TODO Uninstantiable and Unconstructible Types
+
+
+*** TODO Special Built-In Types
+*** TODO Pattern Matching
+*** TODO Foreign Types
+
+
+** Object Definition with ~deftype~
+
+~deftype~ syntax:
+
+#+BEGIN_SRC fn
+(deftype NAME ARG-LIST
+  :instantiable <BOOLEAN>
+  :immutable <BOOLEAN>
+  :construct <FUNCTION>
+  :get <FUNCTION>
+  :set <FUNCTION>
+  :match <FUNCTION>)
+#+END_SRC fn
+
+*FIXME: perhaps move matcher behavior to a defpattern operator*
+
+Description of arguments:
+
+*Note:* any method may be assigned a value of *False*, in which case it will emit an error, or
+*True*, which will cause the default method to be used.
+
+- NAME :: a symbol naming this type. Must be unique w/r/t all existing types
+- ARG-LIST :: an argument list with the same syntax used by ~fn~. This is used to determine the
+              behavior of the default methods, and the variable names in the denote the type's
+              internal slots.
+- ~:instantiable~ :: whether instances of this object can be created with ~instantiate~.
+                    Uninstantiable types are useful for declaring new patterns for ~case~. If
+                    ~False~, all methods will default to ~False~. *Default: ~True~.*
+- ~:immutable~ :: if ~False~, the internal slots of this object can modified. If ~True~, attempts to
+                  modify them will result in an error. *Default: ~True~.*
+- ~:construct~ :: Function used to create instances of this type. This will be bound to globally to
+                  the type name. If ~False~, no function is bound. *Default: ~True~.*
+- ~:get~ :: Function of two arguments to be used by ~@~. The first argument will always be an object
+            of the corresponding type, and the second is an object representing a slot. *Default:
+            ~True~.*
+- ~:set~ :: Function of three arguments to be used by ~set!~. The first argument will always be an
+            object of the corresponding type, the second represents a slot, and the third is the
+            right-hand side of ~set!~. *Default: ~True~.*
+- ~:match~ :: Function of two arguments: a list of pattern arguments and an object on which to do
+              matching. The function should return a dictionary where the keys are the symbols
+              returned by ~match-vars~. *Default: ~True~.*
+- ~:match-vars~ :: Function returning a list of symbols which would be bound by a successful
+                   matching operation. See *Why ~matcher-vars~?* for the rationale behind this
+                   method's existence. *Default: ~True~.*
+
+
+*** Default Methods
+
+*Constructor:* Uses the type's arg-list to bind internal slots in a predictable way.
+
+*Getter:* Takes an internal slot and returns its value.
+
+*Setter:* Takes an internal slot and assigns it to the provided value.
+
+*Matcher:* Does arg-list matching.
+
+*Match Var Getter:* Returns the internal slot names
+
+
+*** Types
+
+#+BEGIN_SRC fn
+(defdata type (:name name
+               :internal-slots (internal-slots [])
+               :instantiable (instantiable True)
+               :immutable (immutable True)
+               :constructor (constructor True)
+               :getter (getter True)
+               :setter (setter True)
+               :matcher (matcher True)
+               :match-vars (match-vars)
+               ))
+#+END_SRC
+
+
+** Generic Object functions
+
+** Protocol Concepts
+
+
+** ~defproto~ and ~defimpl~
 
