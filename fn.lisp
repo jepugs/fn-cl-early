@@ -198,10 +198,14 @@
                        (error "destruct-arg-obj: extra arguments ~s" l0))))))))
 
 (defun arg-list-vars (arg-list)
-  "Get the variable bound by an FN-style args list"
+  "Get the variable bound by an FN-style args list. This is guaranteed to return variable names in
+ left-to-right order."
   (arg-obj-vars (make-args arg-list)))
 
 (defun destructure-arg-list (arg-list l &optional (error-val nil))
+  "(Deprecated) Create a key-value pairing of symbols named in args and values in l"
+  (destruct-arg-obj (make-args arg-list) l error-val))
+(defun bind-arg-list (arg-list l &optional (error-val nil))
   "Create a key-value pairing of symbols named in args and values in l"
   (destruct-arg-obj (make-args arg-list) l error-val))
 
@@ -215,6 +219,27 @@
                        (dict-get bindings (car arg-form))
                        (cadr arg-form)))
                   (t (dict-get bindings arg-form))))
+          arg-list))
+(defun back-sub-arg-list (arg-list bindings)
+  "Substitute the variables names in an arg-list with the values from bindings. This is the inverse
+ operation of (BIND-ARG-LIST ARG-LIST ...)."
+  (mapcar (lambda (arg-form)
+            (cond ((keywordp arg-form) arg-form)
+                  ((eq arg-form '&) arg-form)
+                  ((listp arg-form)
+                   (if (dict-has-key bindings (car arg-form))
+                       (dict-get bindings (car arg-form))
+                       (cadr arg-form)))
+                  (t (dict-get bindings arg-form))))
+          arg-list))
+
+(defun strip-optional (arg-list)
+  "Strip out all optional forms from the arg-list. This is useful for finding corresponding variable
+ names between two arg-lists because it basically creates an argument."
+  (mapcar (lambda (arg-form)
+            (if (listp arg-form)
+                (car arg-form)
+                arg-form))
           arg-list))
 
 ;;;;;;

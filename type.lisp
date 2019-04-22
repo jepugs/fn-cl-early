@@ -1,3 +1,4 @@
+;;;; type.lisp -- implementation of object system
 (in-package :fn-impl)
 
 
@@ -13,19 +14,23 @@
   ((name :initarg :name
          :type symbol
          :documentation "The (unique) symbol identifying this type.")
+   (classes :initarg :classes
+            :type list
+            :documentation "The classes which are considered to be of this type")
    (slots :initarg :slots
           :type list
           :documentation "Symbols naming the slots in this type.")
    (instantiator :initarg :instantiator
-                 :type function
+                 :type (or function boolean)
                  :documentation "Function to instantiate this type (not construct). Takes arguments
  described by the slots arg list in defdata. Should return an object whose class is in CLASSES.
- Should emit an error on uninstantiated objects.")
+ Should emit an error for uninstantiable objects. A value of T causes the default instantiator to be
+ used.")
    (immutable :initarg :immutable
               :type boolean
               :documentation "Whether the slots of this object are immutable.")
    (constructor :initarg :constructor
-                :type function
+                :type (or function null)
                 :documentation "Function to construct this type.")
    (getter :initarg :getter
            :type function
@@ -35,7 +40,7 @@
            :type function
            :documentation "Function to set values in instances of this type. Takes arugments
  (THIS SLOT VALUE).")
-;;; matching behavior is implemented mainly in match.lisp
+   ;; matching behavior is implemented mainly in match.lisp
    (matcher :initarg :matcher
             :type function
             :documentation "Function to do pattern matching on this type. Takes arguments
@@ -43,17 +48,37 @@
    (match-vars :initarg :match-vars
                :type function
                :documentation "Function that processes pattern args to find symbols which would
- be bound on successful pattern matching. Takes arguments (PATTERN-ARGS)."))
+ be bound on successful pattern matching. Takes arguments (PATTERN-ARGS).")
+
+   (impl-table :initarg :impl-table
+               :initform (make-hash-table :test #'eq)
+               :type hash-table
+               :documentation "A table of protocols implemented by this method. This is a hierarchy
+ of hash tables, with the keys being protocol-name (top level) -> method-name. The final value is a
+ function implementing the corresponding method on this type. This will be mutated."))
 
   (:documentation "A data structure describing a type in fn."))
 
+(defmethod print-object ((object type) stream)
+  (format stream "(TYPE :NAME ~s ...)" (slot-value object 'name)))
+
+
 (defclass fn-object ()
-  ((contents :initarg :contents
+  ((type :initarg :type
+         :type type
+         :documentation "Type of this object")
+   (contents :initarg :contents
              :type dict
              :documentation "Dict of slots."))
 
   (:documentation "Superclass for all user-defined types in fn"))
 
+(defmethod print-object ((object fn-object) stream)
+  (let ((type (fn-type-of object)))
+    (format stream
+            "(~s~{~^ ~s~})"
+            (slot-value type 'name)
+            (dict-values (slot-value object 'contents)))))
 
 ;;;;;;
 ;;; Type Functions
@@ -62,7 +87,7 @@
 (defun instantiate (name args)
   "Instantiate a type."
   (aif (gethash name types-by-name)
-       (apply (fn-slot-value it 'instantiator) args)
+       (apply (slot-value it 'instantiator) args)
        (error "instantiate: unknown type ~s" name)))
 
 (defun fn-slot-value (object slot)
@@ -87,7 +112,6 @@
          (funcall (slot-value it 'setter) object index value)
          (error "slot-value: can't find type for object of class ~s" name))))
 
-
 ;;;;;;
 ;;; Type definition facilities
 ;;;;;;
@@ -98,15 +122,22 @@
 (defvar types-by-class (make-hash-table :test #'eq)
   "A hash table of types sorted by data class")
 
-(defun add-type (type classes)
+(defun add-type (type)
   "Add a type to the global tables."
-  (declare (cl:type type type)
-           (cl:type list classes))
-  (with-slots (name) type
+  (declare (cl:type type type))
+  (with-slots (name classes) type
     (if (gethash name types-by-name)
         (warn "Redefining type named ~a" name))
     (setf (gethash name types-by-name) type)
     (mapcar $(setf (gethash $ types-by-class) type) classes)))
+
+(defun fn-type-of (object)
+  "Get the TYPE describing OBJECT"
+  (if (typep object 'fn-object)
+      (slot-value object 'type)
+      (aif (gethash (class-name (class-of object)) types-by-class)
+           it
+           (error "FN-TYPE-OF: Could not determine type of object ~s" object))))
 
 
 ;;; default behaviors
@@ -120,13 +151,14 @@
   "Generates default type instantiation code."
   (lambda (&rest args)
     (let ((contents (destructure-arg-list arg-list args)))
-      (make-instance name :contents contents))))
+      (make-instance name
+                     :type (gethash name types-by-name)
+                     :contents contents))))
 
-(defun make-constructor (name arg-list)
+(defun make-constructor (name)
   "Generates default type constructor code."
   (lambda (&rest args)
-    (let ((contents (destructure-arg-list arg-list args)))
-      (make-instance name :contents contents))))
+    (funcall #'instantiate name args)))
 
 ;; the default getter and setter are not type-specific
 (defun make-getter (name slots)
@@ -212,6 +244,7 @@
          (immutable `(dict-get ,params 'immutable)))
     `(make-instance 'type
                     :name ',name
+                    :classes '(,name)
                     :slots ',slots
                     :instantiator (if (fn-truthy (dict-get ,params 'instantiable))
                                       (make-instantiator ',name ',arg-list)
@@ -219,7 +252,7 @@
                     :immutable (fn-truthy ,immutable)
                     :constructor (get-deftype-method (dict-get ,params 'construct)
                                                      ,instantiable
-                                                     (make-constructor ',name ',arg-list)
+                                                     (make-constructor ',name)
                                                      fn-false)
                     :getter (get-deftype-method (dict-get ,params 'get)
                                                 ,instantiable
@@ -245,12 +278,12 @@
   (let ((type (gensym))
         ;; get unevaluated forms for each argument
         (param-forms (destructure-arg-list `(:|instantiable| (instantiable fn-true)
-                                             :|immutable| (immutable fn-true)
-                                             :|construct| (construct fn-true)
-                                             :|get| (get fn-true)
-                                             :|set| (set fn-true)
-                                             :|match| (match fn-true)
-                                             :|match-vars| (match-vars fn-true))
+                                              :|immutable| (immutable fn-true)
+                                              :|construct| (construct fn-true)
+                                              :|get| (get fn-true)
+                                              :|set| (set fn-true)
+                                              :|match| (match fn-true)
+                                              :|match-vars| (match-vars fn-true))
                                            dt-body))
         ;; this variable will hold a dict of evaluated parameters
         (params (gensym)))
@@ -260,10 +293,182 @@
             (,type ,(make-deftype-type name arg-list params)))
        ;; create a class for the type
        (defclass ,name (fn-object) ())
-       (defmethod print-object ((object ,name) stream)
-         (print (cons ',name (replace-vars ',arg-list (slot-value object 'contents))) stream))
        ;; add the type. There is only one class, and it has the same name as the type.
-       (add-type ,type '(,name))
+       (add-type ,type)
        ;; define the constructor.
        (when (fn-truthy (slot-value ,type 'constructor))
          (define-lexically ,name (slot-value ,type 'constructor) nil)))))
+
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; Primitive type definitions
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(add-type
+ (make-instance 'type
+                :name '|fn|::|Float|
+                :classes '(double-float single-float)
+                :slots ()
+                :immutable t
+                :instantiator (make-false-instantiator '|fn|::|Float|)
+                :constructor nil
+                :getter (make-false-getter '|fn|::|Float|)
+                :setter (make-false-setter '|fn|::|Float|)
+                :matcher (make-false-matcher '|fn|::|Float|)
+                :match-vars false-match-vars))
+
+(add-type
+ (make-instance 'type
+                :name '|fn|::|Int|
+                :classes '(fixnum bignum integer)
+                :slots ()
+                :immutable t
+                :instantiator (make-false-instantiator '|fn|::|Int|)
+                :constructor nil
+                :getter (make-false-getter '|fn|::|Int|)
+                :setter (make-false-setter '|fn|::|Int|)
+                :matcher (make-false-matcher '|fn|::|Int|)
+                :match-vars false-match-vars))
+
+(add-type
+ (make-instance 'type
+                :name '|fn|::|String|
+                ;; This is not portable, but it is what's right
+                #+sbcl
+                :classes '(sb-kernel:simple-character-string string)
+                :slots ()
+                :immutable t
+                :instantiator (make-false-instantiator '|fn|::|String|)
+                :constructor nil
+                :getter (make-false-getter '|fn|::|String|)
+                :setter (make-false-setter '|fn|::|String|)
+                :matcher (make-false-matcher '|fn|::|String|)
+                :match-vars false-match-vars))
+
+(add-type
+ (make-instance 'type
+                :name '|fn|::|Symbol|
+                :classes '(symbol)
+                :slots ()
+                :immutable t
+                :instantiator (make-false-instantiator '|fn|::|Symbol|)
+                :constructor nil
+                :getter (make-false-getter '|fn|::|Symbol|)
+                :setter (make-false-setter '|fn|::|Symbol|)
+                :matcher (make-false-matcher '|fn|::|Symbol|)
+                :match-vars false-match-vars))
+
+
+(add-type
+ (make-instance 'type
+                :name '|fn|::|Bool|
+                :classes '(fn-true fn-false)
+                :slots ()
+                :immutable t
+                :instantiator (make-false-instantiator '|fn|::|Bool|)
+                :constructor nil
+                :getter (make-false-getter '|fn|::|Bool|)
+                :setter (make-false-setter '|fn|::|Bool|)
+                :matcher (make-false-matcher '|fn|::|Bool|)
+                :match-vars false-match-vars))
+
+(add-type
+ (make-instance 'type
+                :name '|fn|::|Null|
+                :classes '(fn-null)
+                :slots ()
+                :immutable t
+                :instantiator (make-false-instantiator '|fn|::|Null|)
+                :constructor nil
+                :getter (make-false-getter '|fn|::|Null|)
+                :setter (make-false-setter '|fn|::|Null|)
+                :matcher (make-false-matcher '|fn|::|Null|)
+                :match-vars false-match-vars))
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; Non-primitive Built-in Types
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(add-type
+ (make-instance
+  'type
+  :name '|fn|::|List|
+  :classes '(cons list null)
+  :slots ()
+  :immutable nil
+  :instantiator (make-false-instantiator '|fn|::|List|)
+  :constructor nil
+  :getter (lambda (obj index)
+            (declare (cl:type list obj)
+                     (cl:type integer index))
+            (nth index obj))
+  :setter (lambda (obj index value)
+            (declare (cl:type list obj)
+                     (cl:type integer index))
+            (setf (nth index obj) value))
+  :matcher (lambda (pattern-args obj)
+             (when (listp obj)
+               ;; iterator over pattern args, collecting bindings until either a match fails or we
+               ;; run out of bindings
+               (rlambda (res a* x*) ({}  pattern-args obj)
+                 (cond ((null a*) (if (null x*)
+                                      res
+                                      nil))
+                       ;; check for rest argument
+                       ((eq (car a*) '&)
+                        (unless (eq (length a*) 2)
+                          (error "list matching: wrong arguments after &~s" (cdr a*)))
+                        (aif (pattern-match (cadr a*) x*)
+                             (dict-extend res it)
+                             nil))
+                       ;; object too short
+                       ((null x*) nil)
+                       ;; attempt matching and append new bindings
+                       (t (aif (pattern-match (car a*) (car x*))
+                               (recur (dict-extend res it)
+                                      (cdr a*)
+                                      (cdr x*))
+                               nil))))))
+  :match-vars (lambda (pattern-args)
+                (mapcan #'pattern-vars
+                        (remove-if $(eq $ '&) pattern-args)))))
+
+(add-type
+ (make-instance
+  'type
+  :name '|fn|::|Dict|
+  :classes '(hash-table)
+  :immutable nil
+  :instantiator (make-false-instantiator '|fn|::|Dict|)
+  :constructor nil
+  :getter (lambda (instance slot)
+            (declare (cl:type dict instance))
+            (dict-get instance slot))
+  :setter (lambda (instance slot value)
+            (declare (cl:type dict instance))
+            (setf (dict-get instance slot) value))
+  :matcher (lambda (pattern-args obj)
+             (when (is-dict obj)
+               ;; this generates an error when there are illegal args
+               (let ((x (apply #'dict pattern-args))
+                     (res {}))
+                 (block b
+                   (maphash $(aif (pattern-match $1 (dict-get obj $0))
+                                  (setq res (dict-extend res it))
+                                  (return-from b nil))
+                            x)
+                   res))))
+  :match-vars (lambda (pattern-args)
+                (let ((pairs (group 2 pattern-args)))
+                  (unless (= (length (car (last pairs))) 2)
+                    (error "dict pattern: Odd number of args"))
+                  (mapcan $(pattern-vars (cadr $)) pairs)))))
+
+;; dict pattern is
+;; (dict KEYFORM PATTERN KEYFORM PATTERN ...)
+;; KEYFORM := KEY | (KEY DEFAULT-VALUE)
+;; recommended to use :keywords as dict keys
+
+

@@ -755,3 +755,24 @@ Description of arguments:
 
 ** ~defproto~ and ~defimpl~
 
+** Built-in Types
+
+*Literals*
+- Float
+- Int
+- String
+- Symbol
+
+*Other Primitive Types*
+- Bool
+- Null
+
+*Built-in Collections*
+- Dict
+- List
+- Array (coming soon!)
+- Bytes (coming soon)
+
+* Idea: Add multimethods to defn by altering signatures. Maybe support pattern matching?
+
+

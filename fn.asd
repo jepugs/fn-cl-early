@@ -18,6 +18,7 @@
                (:file "match")
                (:file "lexical")
                (:file "fn")
+               (:file "protocol")
                (:file "bootlib")
                (:file "reader")
                (:file "bootstrap")))

@@ -2,13 +2,13 @@
 
 
 ;;;;;;
-;;; Schema functions
+;;; Type functions
 ;;;;;;
 
-(defun schema-match (schema pattern-args obj)
-  (funcall (slot-value schema 'matcher) pattern-args obj))
-(defun schema-pattern-vars (schema pattern-args)
-  (funcall (slot-value schema 'match-var-parser) pattern-args))
+(defun type-match (type pattern-args obj)
+  (funcall (slot-value type 'matcher) pattern-args obj))
+(defun type-match-vars (type pattern-args)
+  (funcall (slot-value type 'match-vars) pattern-args))
 
 
 ;;;;;;
@@ -49,9 +49,9 @@ object."
          {pattern obj})
         ((is-literal pattern)           ; literal
          (literal-match pattern obj))
-        ((listp pattern)                ; schema
-         (aif (gethash (car pattern) schemas-by-name)
-              (schema-match it (cdr pattern) obj)
+        ((listp pattern)                ; type
+         (aif (gethash (car pattern) types-by-name)
+              (type-match it (cdr pattern) obj)
               (progn (warn "Unknown pattern ~a" pattern)
                      nil)))
         (t (warn "Unknown pattern ~a" pattern)
@@ -66,7 +66,7 @@ object."
                 :initial-value {})
         nil)))
 
-(defun pattern-vars (pattern)
+(defun match-vars (pattern)
   "Makes a list of all variables that a pattern would bind."
   (cond ((is-wild pattern) nil)
         ((and (symbolp pattern)
@@ -74,10 +74,10 @@ object."
               (not (eq pattern '&)))
          (list pattern))
         ((is-literal pattern) nil)
-        ((and (listp pattern) (symbolp (car pattern))) ;schema pattern
-         (aif (gethash (car pattern) schemas-by-name)
-              (mapcan #'pattern-vars (schema-pattern-vars it (cdr pattern)))
-              (progn (warn "pattern-vars: schema not found ~s" (car pattern))
+        ((and (listp pattern) (symbolp (car pattern))) ;type pattern
+         (aif (gethash (car pattern) types-by-name)
+              (mapcan #'match-vars (type-match-vars it (cdr pattern)))
+              (progn (warn "match-vars: type not found ~s" (car pattern))
                      nil)))
         (t nil)))
 
@@ -90,7 +90,7 @@ object."
     `(let ((,b (pattern-match ',pattern ,obj)))
        ,@(mapcar (lambda (x)
                    (funcall body-func x `(dict-get ,b ',x)))
-                 (pattern-vars pattern)))))
+                 (match-vars pattern)))))
 
 (defun bindings-assignment (bindings vars)
   "Create a list of SETQ forms assigning the variables named in VARS to the
@@ -104,7 +104,7 @@ object."
  successful, match-form is evaluated in the new lexical environment. Otherwise,
  else-form is evaluated."
   (let ((b (gensym))
-        (vars (mapcan #'pattern-vars patterns)))
+        (vars (mapcan #'match-vars patterns)))
     `(let ((,b (patterns-match ',patterns [,@objs])))
        (if ,b
            (let ,vars

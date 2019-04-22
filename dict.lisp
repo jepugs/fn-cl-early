@@ -57,6 +57,22 @@
         (apply #'dict-extend dict1 (cdr dicts)))
       dict0))
 
+(defun dict-keys (d)
+  (let (res)
+    (maphash (lambda (k v)
+               (declare (ignore v))
+               (push k res))
+             d)
+    (nreverse res)))
+
+(defun dict-values (d)
+  (let (res)
+    (maphash (lambda (k v)
+               (declare (ignore k))
+               (push v res))
+             d)
+    (nreverse res)))
+
 (defun dict->list (d)
   (let (res)
     (maphash (lambda (k v)

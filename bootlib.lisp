@@ -7,6 +7,8 @@
 
 (defparameter bootlib-defs nil
   "Def forms for the fn bootstrap environment.")
+(defparameter bootlib-syms nil
+  "List of all symbols defined during bootstrapping")
 
 ;;; TODO: hook exports code into lexical definitions code to prevent people from
 ;;; redefining built-in forms.
@@ -16,22 +18,26 @@
  restricted than the def operator in that it doesn't support pattern matching or
  multiple definitions."
   `(progn
+     (push ',(intern name "fn") bootlib-syms)
      (push '(|fn|::|def| ,(intern name "fn") ,value) bootlib-defs)))
 
 (defmacro defn/boot (name arg-list &body body)
   "Define a lexical global function and add it to the lexical export list.
  This macro accepts the same arguments as defn."
   `(progn
+     (push ',(intern name "fn") bootlib-syms)
      (push '(|fn|::|defn| ,(intern name "fn") ,arg-list ,@body) bootlib-defs)))
 
 (defmacro defmacro/boot (name arg-list &body body)
   "Creates a macro definition and adds it to the export list. Unlike the
  other /BOOT macros, this uses a Common Lisp-style lambda list."
   `(progn
+     (push ',(intern name "fn") bootlib-syms)
      (push '(defmacro ,(intern name "fn") ,arg-list ,@body) bootlib-defs)))
 
 (defmacro def-sym-macro/boot (name expansion)
   `(progn
+     (push ',(intern name "fn") bootlib-syms)
      (push '(define-symbol-macro ,(intern name "fn") ,expansion) bootlib-defs)))
 
 
@@ -72,7 +78,7 @@
      ,@forms))
 
 (defmacro/boot "if" (test then else)
-  `(if (true-ish ,test)
+  `(if (fn-truthy ,test)
        ,then
        ,else))
 
@@ -164,17 +170,13 @@
   `(setf ,name ,value))
 
 
+
 ;;;;;;
 ;;; Booleans
 ;;;;;;
 
 (def-sym-macro/boot "True" fn-true)
 (def-sym-macro/boot "False" fn-false)
-
-(defun true-ish (x)
-  (not (eq x fn-false)))
-(defun false-ish (x)
-  (eq x fn-false))
 
 (defun rebool (x)
   "Convert CL booleans to fn ones. Be careful using this, because it will
@@ -188,7 +190,7 @@
               (eq x fn-false))))
 
 (defn/boot "not" (x)
-  (if (true-ish x)
+  (if (fn-truthy x)
       fn-false
       fn-true))
 
@@ -224,7 +226,7 @@
 
 
 ;;;;;;
-;;; Schemas
+;;; Objects
 ;;;;;;
 
 (defn/boot "instantiate" (name & args)
@@ -243,16 +245,25 @@
   (set-index object index value))
 
 (defmacro/boot "deftype" (name arg-list &body body)
-  "Defines a new data-schema"
+  "Defines a new data type"
   (expand-deftype name arg-list body))
 
+(defn/boot "type-of" (object)
+  (slot-value (fn-type-of object) 'name))
+
+
+(defmacro/boot "defproto" (name &body body)
+  (expand-defproto name body))
+
+(defmacro/boot "defimpl" (proto-name type-name &body body)
+  (expand-defimpl proto-name type-name body))
 
 ;;;;;;
 ;;; Lists
 ;;;;;;
 
 (defn/boot "List" (& args)
-        (apply #'list args))
+  (apply #'list args))
 
 (defn/boot "is-list" (x)
   (rebool (listp x)))
@@ -266,47 +277,6 @@
 (defn/boot "last" (l)
   (car (last l)))
 
-(push
- `(add-type
-   (make-instance
-    'type
-    :name '|fn|::|List|
-    :slots ()
-    :immutable nil
-    :instantiator |fn|::|List|
-    :constructor |fn|::|List|
-    :getter (lambda (obj index)
-              (declare (cl:type list obj)
-                       (cl:type integer index))
-              (nth index obj))
-    :setter (lambda (obj index value)
-              (declare (cl:type list obj)
-                       (cl:type integer index))
-              (setf (nth index obj) value))
-    :matcher (lambda (pattern-args obj)
-               (when (listp obj)
-                 (rlambda (res a* x*) ({}  pattern-args obj)
-                   (cond ((null a*) (if (null x*)
-                                        res
-                                        nil))
-                         ((eq (car a*) '&)
-                          (unless (eq (length a*) 2)
-                            (error "list matching: wrong arguments after &~s"
-                                   (cdr a*)))
-                          (aif (pattern-match (cadr a*) x*)
-                               (dict-extend res it)
-                               nil))
-                         ((null x*) nil)
-                         (t (aif (pattern-match (car a*) (car x*))
-                                 (recur (dict-extend res it)
-                                        (cdr a*)
-                                        (cdr x*))
-                                 nil))))))
-    :match-vars (lambda (pattern-args)
-                  (mapcan #'pattern-vars
-                          (remove-if $(eq $ '&) pattern-args))))
-   '(cons list null))
- bootlib-defs)
 
 
 ;;;;;;
@@ -334,42 +304,6 @@
 (defn/boot "dict-extend" (dict0 & dicts)
   (apply #'dict-extend dict0 dicts))
 
-(push
- `(add-schema
-   (make-instance
-    'schema
-    :name '|fn|::|Dict|
-    :classes '(hash-table)
-    :instantiator |fn|::|Dict|
-    :getter (lambda (instance slot)
-              (declare (cl:type dict instance))
-              (dict-get instance slot))
-    :setter (lambda (instance slot value)
-              (declare (cl:type dict instance))
-              (setf (dict-get instance slot) value))
-    :matcher (lambda (pattern-args obj)
-               (when (is-dict obj)
-                 ;; this generates an error when there are illegal args
-                 (let ((x (apply #'dict pattern-args))
-                       (res {}))
-                   (block b
-                     (maphash $(aif (pattern-match $1 (dict-get obj $0))
-                                    (setq res (dict-extend res it))
-                                    (return-from b nil))
-                              x)
-                     res))))
-    :match-var-parser (lambda (pattern-args)
-                        (let ((pairs (group 2 pattern-args)))
-                          (unless (= (length (car (last pairs))) 2)
-                            (error "dict pattern: Odd number of args"))
-                          (mapcan $(pattern-vars (cadr $)) pairs)))))
- bootlib-defs)
-
-;; dict pattern is
-;; (dict KEYFORM PATTERN KEYFORM PATTERN ...)
-;; KEYFORM := KEY | (KEY DEFAULT-VALUE)
-;; recommended to use :keywords as dict keys
-
 
 ;;;;;;
 ;;; Strings
@@ -386,35 +320,6 @@
 (defn/boot "is-char" (x)
   (rebool (and (stringp x)
                (eql (length x) 1))))
-
-(push
- '(add-schema
-   (make-instance 'schema
-                  :name '|fn|::|String|
-                  :classes '(string)
-                  :instantiator |fn|::|String|
-                  :getter (lambda (instance slot)
-                            (declare (cl:type string instance)
-                                     (cl:type integer slot))
-                            (aref instance slot))
-                  :setter (lambda (instance slot value)
-                            (declare (cl:type string instance)
-                                     (cl:type integer slot)
-                                     (cl:type string value))
-                            (concatenate 'string
-                                         (subseq instance 0 slot)
-                                         value
-                                         (if (< slot (- (length instance) 1))
-                                             (subseq instance (+ slot 1))
-                                             "")))
-                  :matcher (lambda (pattern-args obj)
-                             (declare (ignore obj))
-                             (error "String pattern is unimplemented: ~a"
-                                    `(string ,@pattern-args)))
-                  :match-var-parser (lambda (pattern-args)
-                                      (declare (ignore pattern-args))
-                                      nil)))
- bootlib-defs)
 
 
 ;;;;;;
