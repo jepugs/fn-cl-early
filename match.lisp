@@ -7,8 +7,8 @@
 
 (defun type-match (type pattern-args obj)
   (funcall (slot-value type 'matcher) pattern-args obj))
-(defun type-match-vars (type pattern-args)
-  (funcall (slot-value type 'match-vars) pattern-args))
+(defun type-pattern-vars (type pattern-args)
+  (funcall (slot-value type 'pattern-vars) pattern-args))
 
 
 ;;;;;;
@@ -66,7 +66,7 @@ object."
                 :initial-value {})
         nil)))
 
-(defun match-vars (pattern)
+(defun pattern-vars (pattern)
   "Makes a list of all variables that a pattern would bind."
   (cond ((is-wild pattern) nil)
         ((and (symbolp pattern)
@@ -76,12 +76,12 @@ object."
         ((is-literal pattern) nil)
         ((and (listp pattern) (symbolp (car pattern))) ;type pattern
          (aif (gethash (car pattern) types-by-name)
-              (mapcan #'match-vars (type-match-vars it (cdr pattern)))
-              (progn (warn "match-vars: type not found ~s" (car pattern))
+              (mapcan #'pattern-vars (type-pattern-vars it (cdr pattern)))
+              (progn (warn "pattern-vars: type not found ~s" (car pattern))
                      nil)))
         (t nil)))
 
-(defun for-match-vars (pattern obj body-func)
+(defun for-pattern-vars (pattern obj body-func)
   "For use in macro writing. Returns code that executes body for each variable
  bounding by the match. Body func should accept two arguments, a name var and a
  form var, and return an expression for the body (i.e. code to execute for each
@@ -90,7 +90,7 @@ object."
     `(let ((,b (pattern-match ',pattern ,obj)))
        ,@(mapcar (lambda (x)
                    (funcall body-func x `(dict-get ,b ',x)))
-                 (match-vars pattern)))))
+                 (pattern-vars pattern)))))
 
 (defun bindings-assignment (bindings vars)
   "Create a list of SETQ forms assigning the variables named in VARS to the
@@ -104,17 +104,19 @@ object."
  successful, match-form is evaluated in the new lexical environment. Otherwise,
  else-form is evaluated."
   (let ((b (gensym))
-        (vars (mapcan #'match-vars patterns)))
-    `(let ((,b (patterns-match ',patterns [,@objs])))
-       (if ,b
-           (let ,vars
-             (labels ,(mapcar $(let ((g (gensym)))
-                                 `(,$ (&rest ,g)
-                                      (cl:apply ,$ ,g)))
-                              vars)
-               (progn ,@(bindings-assignment b vars))
-               ,match-form))
-           ,else-form))))
+        (vars (mapcan #'pattern-vars patterns)))
+    ;; fisrt, bind every name in variable space so they're visible for recursive definition
+    `(let ,vars
+       ;; bind every name in the function space
+       (labels ,(mapcar $(let ((g (gensym)))
+                           `(,$ (&rest ,g)
+                                (cl:apply ,$ ,g)))
+                        vars)
+         (let ((,b (patterns-match ',patterns [,@objs])))
+           (if ,b
+               (progn ,@(bindings-assignment b vars)
+                      ,match-form)
+               ,else-form))))))
 
 
 

@@ -125,7 +125,7 @@
   (let* ((pairs (group 2 pattern-value-pairs)))
     `(eval-when (:compile-toplevel :load-toplevel :execute)
        ,@(mapcar
-          $(for-match-vars (car $)
+          $(for-pattern-vars (car $)
                            (cadr $)
                            (lambda (k v)
                              `(define-lexically ,k ,v nil)))
@@ -136,7 +136,7 @@
   "Define a global dynamic variable."
   (let* ((pairs (group 2 pattern-value-pairs)))
     `(progn
-       ,@(mapcar $(for-match-vars (car $)
+       ,@(mapcar $(for-pattern-vars (car $)
                                   (cadr $)
                                   (lambda (k v)
                                     `(defparameter ,k ,v)))
@@ -209,19 +209,21 @@
       fn-false))
 
 (defn/boot "=" (x0 & x)
-  {:|curry| 1}
-  (rebool (apply #'equalp x0 x)))
+  (|fn|::|Dict| :|curry| 1)
+  (rebool
+   (apply #'fn= x0 x)))
+
 (defn/boot "<" (x0 & x)
-  {:|curry| 1}
+  (|fn|::|Dict| :|curry| 1)
   (rebool (apply #'< x0 x)))
 (defn/boot "<=" (x0 & x)
-  {:|curry| 1}
+  (|fn|::|Dict| :|curry| 1)
   (rebool (apply #'<= x0 x)))
 (defn/boot ">" (x0 & x)
-  {:|curry| 1}
+  (|fn|::|Dict| :|curry| 1)
   (rebool (apply #'> x0 x)))
 (defn/boot ">=" (x0 & x)
-  {:|curry| 1}
+  (|fn|::|Dict| :|curry| 1)
   (rebool (apply #'>= x0 x)))
 
 
@@ -268,8 +270,12 @@
 (defn/boot "is-list" (x)
   (rebool (listp x)))
 
-(defn/boot "cons" (hd & tl)
-  {:|curry| 1}
+(defn/boot "conc" (lst0 & lsts)
+  (|fn|::|Dict| :|curry| 1)
+  (apply #'append lst0 lsts))
+
+(defn/boot "cons" (hd tl)
+  (|fn|::|Dict| :|curry| 1)
   (if (listp tl)
       (cons hd tl)
       (error "cons: tail must be a list")))
@@ -336,19 +342,19 @@
   (rebool (numberp x)))
 
 (defn/boot "+" (x0 & x)
-  {:|curry| 1}
+  (|fn|::|Dict| :|curry| 1)
   (apply #'+ x0 x))
 (defn/boot "-" (x0 & x)
-  {:|curry| 1}
+  (|fn|::|Dict| :|curry| 1)
   (apply #'- x0 x))
 (defn/boot "*" (x0 & x)
-  {:|curry| 1}
+  (|fn|::|Dict| :|curry| 1)
   (apply #'* x0 x))
 (defn/boot "/" (x0 & x)
-  {:|curry| 1}
+  (|fn|::|Dict| :|curry| 1)
   (apply #'/ x0 x))
 (defn/boot "mod" (n d)
-  {:|curry| 1}
+  (|fn|::|Dict| :|curry| 1)
   (mod n d))
 
 
@@ -366,7 +372,7 @@
     (t (error "length: not a sequence: ~s" seq))))
 
 (defn/boot "is-empty" (seq)
-  (= (length seq) 0))
+  (rebool (= (length seq) 0)))
 
 (defun as-list (seq)
   (cond
@@ -407,7 +413,7 @@
         (t (error "tail: not a sequence"))))
 
 (defn/boot "split" (n seq)
-  {:|curry| 1}
+  (|fn|::|Dict| :|curry| 1)
   (labels ((iter (acc tl m)
              (|fn|::|if| (|fn|::|and| (|fn|::|not| (|fn|::|is-empty| seq))
                               (|fn|::|<| m n))
@@ -417,15 +423,15 @@
     (iter [] seq 0)))
 
 (defn/boot "take" (n seq)
-  {:|curry| 1}
+  (|fn|::|Dict| :|curry| 1)
   (subseq seq 0 (min n (length seq))))
 
 (defn/boot "drop" (n seq)
-  {:|curry| 1}
+  (|fn|::|Dict| :|curry| 1)
   (subseq seq (min n (length seq))))
 
 (defn/boot "split-when" (f seq)
-  {:|curry| 1}
+  (|fn|::|Dict| :|curry| 1)
   (labels ((iter (acc tl)
              (|fn|::|if| (funcall f (car tl))
                   (iter (cons (car tl) acc) (cdr tl))
@@ -434,7 +440,7 @@
     (iter [] seq)))
 
 (defn/boot "take-while" (f seq)
-  {:|curry| 1}
+  (|fn|::|Dict| :|curry| 1)
   (labels ((iter (acc tl)
              (|fn|::|if| (funcall f (car tl))
                   (iter (cons (car tl) acc) (cdr tl))
@@ -442,7 +448,7 @@
     (iter [] seq)))
 
 (defn/boot "drop-while" (f seq)
-  {:|curry| 1}
+  (|fn|::|Dict| :|curry| 1)
   (|fn|::|cond|
     (|fn|::|is-empty| seq) seq
     (funcall f (|fn|::|head| seq))
@@ -450,18 +456,18 @@
     fn-true seq))
 
 (defn/boot "map" (f seq)
-  {:|curry| 1}
+  (|fn|::|Dict| :|curry| 1)
   (match-seq-type seq (mapcar f (as-list seq))))
 
 (defn/boot "zip" (& seqs)
   (apply #'map 'list #'list (mapcar #'as-list seqs)))
 
 (defn/boot "filter" (f seq)
-  {:|curry| 1}
+  (|fn|::|Dict| :|curry| 1)
   (match-seq-type seq (remove-if-not f (as-list seq))))
 
 (defn/boot "fold" (f init seq)
-  {:|curry| 2}
+  (|fn|::|Dict| :|curry| 2)
   (match-seq-type seq (reduce f (as-list seq) :initial-value init)))
 
 
@@ -472,3 +478,5 @@
 (defn/boot "print" (x)
   (princ x))
 
+(defn/boot "quit" ()
+  (unboot-fn))

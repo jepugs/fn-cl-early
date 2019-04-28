@@ -29,3 +29,6 @@
 
 ;; wildcard pattern
 (defparameter fn-wildcard (intern "_" :|fn|))
+
+(intern "&" :|fn|)
+(import '|fn|::&)

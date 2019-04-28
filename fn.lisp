@@ -303,11 +303,11 @@
          #',self))))
 
 (defun curry (curry-times f)
-  (lambda (& args)
+  (lambda (&rest args)
     (if (<= (length args) curry-times)
-        (curry (- curry-times (length args))
-               (lambda (& args2)
-                 (apply #'f (append args args2))))
+        (curry curry-times
+               (lambda (&rest args2)
+                 (apply f (append args args2))))
         (apply f args))))
 
 (defun make-fn (arg-list body)

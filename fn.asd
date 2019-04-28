@@ -11,8 +11,8 @@
   :description "fn Programming Language"
   :serial t
   :components ((:file "package")
-               (:file "macros")
-               (:file "dict")
+               (:file "util")
+               (:file "dollar-sign-reader")
                (:file "constants")
                (:file "type")
                (:file "match")

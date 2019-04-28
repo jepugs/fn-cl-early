@@ -14,7 +14,7 @@
          (all-0s (remove-if-not (lambda (x)
                                   (= ($-arg-number x) 0))
                                 $-args)))
-    `(|fn|
+    `(|fn|::|fn|
          ;; create the argument list
          ,(append
            (loop for i from 0 to argc
@@ -62,6 +62,6 @@
   ;;(set-macro-character #\. nil)
   (set-macro-character #\| nil))
 
-(defun fn-read (&optional (stream *standard-input*))
+(defun fn-read (&optional (stream *standard-input*) &rest read-args)
   (let ((*readtable* fn-readtable))
-    (read)))
+    (apply #'read stream read-args)))

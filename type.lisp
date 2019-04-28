@@ -45,7 +45,7 @@
             :type function
             :documentation "Function to do pattern matching on this type. Takes arguments
  (PATTERN-ARGS OBJ), and returns a dict of symbols and values that represents bindings.")
-   (match-vars :initarg :match-vars
+   (pattern-vars :initarg :pattern-vars
                :type function
                :documentation "Function that processes pattern args to find symbols which would
  be bound on successful pattern matching. Takes arguments (PATTERN-ARGS).")
@@ -111,6 +111,19 @@
     (aif (gethash name types-by-class)
          (funcall (slot-value it 'setter) object index value)
          (error "slot-value: can't find type for object of class ~s" name))))
+
+(defun fn= (x0 &rest x)
+  "Equality that knows how to descend into fn objects."
+  ;; IMPLNOTE: since EQUALP works on everything _but_ general objects, we have to manually check the
+  ;; slots of instances of FN-OBJECT
+  ;; IMPLNOTE: the definition of FN-OBJECT is in type.lisp
+  (if (every $(typep $ 'fn-object) (cons x0 x))
+      (with-slots (type contents) x0
+        (every $(and (eq (slot-value $ 'type) type)
+                     (equalp (slot-value $ 'contents) contents))
+               x))
+      (apply #'equalp x0 x)))
+
 
 ;;;;;;
 ;;; Type definition facilities
@@ -191,7 +204,7 @@
                    x)
           res)))))
 
-(defun make-match-vars (arg-list)
+(defun make-pattern-vars (arg-list)
   "Creates a function to do arg list-based match var parsing."
   (lambda (pattern-args)
     (let ((x (destructure-arg-list arg-list pattern-args))
@@ -217,7 +230,7 @@
   (lambda (pattern-args obj)
     (declare (ignore pattern-args obj))
     (error "Type ~s doesn't support matching." name)))
-(defparameter false-match-vars
+(defparameter false-pattern-vars
   (lambda (pattern-args)
     (declare (ignore pattern-args))
     nil))
@@ -268,10 +281,10 @@
                                                  ,instantiable
                                                  (make-matcher ',arg-list ',name)
                                                  (make-false-matcher ',name))
-                    :match-vars (get-deftype-method (dict-get ,params 'match-vars)
+                    :pattern-vars (get-deftype-method (dict-get ,params 'pattern-vars)
                                                     ,instantiable
-                                                    (make-match-vars ',arg-list)
-                                                    false-match-vars))))
+                                                    (make-pattern-vars ',arg-list)
+                                                    false-pattern-vars))))
 
 (defun expand-deftype (name arg-list dt-body)
   "Expands a deftype form into code to create and bind the type."
@@ -283,7 +296,7 @@
                                               :|get| (get fn-true)
                                               :|set| (set fn-true)
                                               :|match| (match fn-true)
-                                              :|match-vars| (match-vars fn-true))
+                                              :|pattern-vars| (pattern-vars fn-true))
                                            dt-body))
         ;; this variable will hold a dict of evaluated parameters
         (params (gensym)))
@@ -316,7 +329,7 @@
                 :getter (make-false-getter '|fn|::|Float|)
                 :setter (make-false-setter '|fn|::|Float|)
                 :matcher (make-false-matcher '|fn|::|Float|)
-                :match-vars false-match-vars))
+                :pattern-vars false-pattern-vars))
 
 (add-type
  (make-instance 'type
@@ -329,7 +342,7 @@
                 :getter (make-false-getter '|fn|::|Int|)
                 :setter (make-false-setter '|fn|::|Int|)
                 :matcher (make-false-matcher '|fn|::|Int|)
-                :match-vars false-match-vars))
+                :pattern-vars false-pattern-vars))
 
 (add-type
  (make-instance 'type
@@ -344,7 +357,7 @@
                 :getter (make-false-getter '|fn|::|String|)
                 :setter (make-false-setter '|fn|::|String|)
                 :matcher (make-false-matcher '|fn|::|String|)
-                :match-vars false-match-vars))
+                :pattern-vars false-pattern-vars))
 
 (add-type
  (make-instance 'type
@@ -357,7 +370,7 @@
                 :getter (make-false-getter '|fn|::|Symbol|)
                 :setter (make-false-setter '|fn|::|Symbol|)
                 :matcher (make-false-matcher '|fn|::|Symbol|)
-                :match-vars false-match-vars))
+                :pattern-vars false-pattern-vars))
 
 
 (add-type
@@ -371,7 +384,7 @@
                 :getter (make-false-getter '|fn|::|Bool|)
                 :setter (make-false-setter '|fn|::|Bool|)
                 :matcher (make-false-matcher '|fn|::|Bool|)
-                :match-vars false-match-vars))
+                :pattern-vars false-pattern-vars))
 
 (add-type
  (make-instance 'type
@@ -384,7 +397,7 @@
                 :getter (make-false-getter '|fn|::|Null|)
                 :setter (make-false-setter '|fn|::|Null|)
                 :matcher (make-false-matcher '|fn|::|Null|)
-                :match-vars false-match-vars))
+                :pattern-vars false-pattern-vars))
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -431,7 +444,7 @@
                                       (cdr a*)
                                       (cdr x*))
                                nil))))))
-  :match-vars (lambda (pattern-args)
+  :pattern-vars (lambda (pattern-args)
                 (mapcan #'pattern-vars
                         (remove-if $(eq $ '&) pattern-args)))))
 
@@ -460,11 +473,11 @@
                                   (return-from b nil))
                             x)
                    res))))
-  :match-vars (lambda (pattern-args)
-                (let ((pairs (group 2 pattern-args)))
-                  (unless (= (length (car (last pairs))) 2)
-                    (error "dict pattern: Odd number of args"))
-                  (mapcan $(pattern-vars (cadr $)) pairs)))))
+  :pattern-vars (lambda (pattern-args)
+                  (let ((pairs (group 2 pattern-args)))
+                    (unless (= (length (car (last pairs))) 2)
+                      (error "dict pattern: Odd number of args"))
+                    (mapcan $(pattern-vars (cadr $)) pairs)))))
 
 ;; dict pattern is
 ;; (dict KEYFORM PATTERN KEYFORM PATTERN ...)
