@@ -112,18 +112,6 @@
          (funcall (slot-value it 'setter) object index value)
          (error "slot-value: can't find type for object of class ~s" name))))
 
-(defun fn= (x0 &rest x)
-  "Equality that knows how to descend into fn objects."
-  ;; IMPLNOTE: since EQUALP works on everything _but_ general objects, we have to manually check the
-  ;; slots of instances of FN-OBJECT
-  ;; IMPLNOTE: the definition of FN-OBJECT is in type.lisp
-  (if (every $(typep $ 'fn-object) (cons x0 x))
-      (with-slots (type contents) x0
-        (every $(and (eq (slot-value $ 'type) type)
-                     (equalp (slot-value $ 'contents) contents))
-               x))
-      (apply #'equalp x0 x)))
-
 
 ;;;;;;
 ;;; Type definition facilities

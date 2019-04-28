@@ -401,11 +401,8 @@ indented according to normal function rules.
     for inline conses.
   - rejected idea (don't repeat this mistake): & is a function so (& a b c) :=
     [a b & c].
-  - make objects with the keyword NEW. Schemas decide their own constructor
-    parameters
-  - Every schema has a corresponding pattern matcher
-  - When looking up an object's schema, we will use the class name of the object
-    as the key for a hash table. This is to make the lookup as fast as possible.
+  - Types are first-class objects. Types are also Callables, and calling a type like a function
+    invokes its constructor
 
 
 * Standard Library
@@ -773,6 +770,5 @@ Description of arguments:
 - Array (coming soon!)
 - Bytes (coming soon)
 
-* Idea: Add multimethods to defn by altering signatures. Maybe support pattern matching?
 
 
