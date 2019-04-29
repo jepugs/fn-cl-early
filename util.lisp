@@ -101,8 +101,9 @@
   ;; IMPLNOTE: the definition of FN-OBJECT is in type.lisp
   (if (every $(typep $ 'fn-object) (cons x0 x))
       (with-slots (type contents) x0
-        (every $(and (eq (slot-value $ 'type) type)
-                     (equalp (slot-value $ 'contents) contents))
+        (every (lambda (x)
+                 (and (eq (slot-value x 'type) type)
+                      (equalp (slot-value x 'contents) contents)))
                x))
       (apply #'equalp x0 x)))
 
