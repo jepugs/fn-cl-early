@@ -244,7 +244,7 @@
   (let ((strs (mapcar #'princ-to-string args)))
     (intern (apply #'concatenate 'string strs))))
 
-(defun is-quoted (expr)
+(defun quoted-p (expr)
   "Tell if EXPR is a quoted expression."
   (and (listp expr)
        (eq (car expr) 'quote)
@@ -409,3 +409,10 @@ using EQUALP for their test."
            (list (nreverse rleft) right))
           (t
            (recur (cons (car right) rleft) (cdr right))))))
+
+(defun is-quoted (expr)
+  "Tell if EXPR is a quoted expression."
+  (and (listp expr)
+       (eq (car expr) 'quote)
+       (= (length expr) 2)))
+
