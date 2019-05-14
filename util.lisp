@@ -99,7 +99,7 @@
   ;; IMPLNOTE: since EQUALP works on everything _but_ general objects, we have to manually check the
   ;; slots of instances of FN-OBJECT
   ;; IMPLNOTE: the definition of FN-OBJECT is in type.lisp
-  (if (every $(typep $ 'fn-object) (cons x0 x))
+  (if (every (lambda (x) (typep x 'fn-object)) (cons x0 x))
       (with-slots (type contents) x0
         (every (lambda (x)
                  (and (eq (slot-value x 'type) type)
