@@ -7,6 +7,7 @@
              (the *domain*) to another (the *range*). For our purposes, every element in the
              *domain* maps to a single (not necessarily unique) element in the *range*.
 
+
 * Basic Facts
 
   fn is a programming language. It's qualities are

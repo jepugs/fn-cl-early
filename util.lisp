@@ -189,6 +189,19 @@
     (setf (gethash key res) value)
     res))
 
+(defun ht-del-keys (ht keys &key (test #'fn=))
+  "Non-destructively delete all the keys in the list KEYS from HT. TEST is a test function used to
+  determine whether a key is a member of KEYS."
+  (declare (cl:type hash-table ht)
+           (cl:type list keys)
+           (cl:type function test))
+  (let ((res (make-ht)))
+    (maphash (lambda (k v)
+               (unless (member k keys :test test)
+                 (setf (gethash k res) v)))
+             ht)
+    res))
+
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 

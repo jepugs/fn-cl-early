@@ -29,6 +29,15 @@
 
 ;; wildcard pattern
 (defparameter fn-wildcard (intern "_" :|fn|))
+(import '|fn|::_)
+;; To handle wildcards in some contexts, we use packageless symbols whose names start with this
+;; prefix
+(defparameter wild-gensym-prefix "__FN_WILD_")
+(defun wild-gensym-p (x)
+  (and (symbolp x)
+       (null (symbol-package x))
+       (equalp (subseq (symbol-name x) 0 (length wild-gensym-prefix))
+               wild-gensym-prefix)))
 
 (intern "&" :|fn|)
 (import '|fn|::&)

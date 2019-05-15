@@ -14,6 +14,7 @@
                (:file "util")
                (:file "dollar-sign-reader")
                (:file "constants")
+               (:file "params")
                (:file "type")
                (:file "match")
                (:file "lexical")
