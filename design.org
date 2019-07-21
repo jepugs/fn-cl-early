@@ -1,266 +1,65 @@
-* Terminology (in progress: port from glossary)
+* Introduction
 
-- function :: A function is a callable subroutine which make take arguments and returns a value.
-              All subroutines in fn are functions. For the usual mathematical definition of a
-              function, we use *mapping*.
-- mapping :: A mapping in the mathematical sense; that is, a correspondence from elements of one set
-             (the *domain*) to another (the *range*). For our purposes, every element in the
-             *domain* maps to a single (not necessarily unique) element in the *range*.
+fn is a programming language in the Lisp family. It will feature a robust and streamlined object
+system, an intuitive module-based approach to code organization, powerful metaprogramming
+facilities, and a variety of quality of life features that aid in writing especially concise code
+without sacrificing clarity.
 
 
-* Basic Facts
+** fn compared to other dialects of Lisp
 
-  fn is a programming language. It's qualities are
+Compared to most dialects of Lisp, fn has a small number of special forms, several new syntactic
+conveniences, and a strong focus on its native object system. The object system strives to avoid
+several of CLOS, namely its feeling tacked-on to the rest of the language and being rather verbose.
 
-  - is a lisp
-  - uses lexical scope for everything by default, but makes dynamic scope available
-  - has a single namespace for functions and variables
-  - designed to be succinct and expressive
-  - includes a powerful data type definition system with extremely simple and consistent syntax
-  - provides lightweight but robust polymorphism via protocols
-  - heavily focused on providing consistent, intuitive interfaces to parallel functionality
+In addition, fn code is homoiconic like Common Lisp, allowing writing of macros in the traditional
+Lisp way, which I greatly prefer to the hygienic macros and templates of e.g. Racket or Scheme.
 
 
-* Implementation and Bootstraps
+** Implementation notes
 
-  - Everything is implemented in Common Lisp. The only supported implementation is SBCL. No particular
-    effort is made to maintain ANSI compliance, although most of the code is ANSI anyway.
-  - Most of the code is in the FN-IMPL package. This package makes use of some utilities including a $
-    reader macro which behaves very similarly to the one from fn.
-  - The fn package is a drop-in replacement for the CL package that turns Common Lisp into FN.
-  - There will be a standard library one day. It will initially be implemented entirely in FN and
-    Common Lisp, but we would like to do a lot of it in C++ (i.e. threads, networking, matrix
-    operations) eventually.
-  - At some point, I will likely reach the limit of what Common Lisp macros can easily do, and will
-    need to begin the lengthy undertaking of writing a custom VM and interpreter. Beyond that, a
-    dedicated compiler and FFI will eventually be desirable, so depending on how far I take this, we
-    may need to reimplement the whole damn thing in C++.
-  - The benefit to the current implementation of FN is that we can trivially use any Common Lisp
-    libraries from FN source, so a crucial precondition to reimplementing the core language would be
-    ensuring that it has a very rich standard library.
+- Everything is implemented in Common Lisp. The only supported implementation is SBCL. No particular
+  effort is made to maintain ANSI compliance, although most of the code is ANSI anyway.
+- This code is only tested on a handful of my personal computers, all of which run Arch Linux.
+- I am currently in the process of rewriting fn. The previous version, which was nearly a feature
+  complete version 0, was built as a layer on top of Common Lisp, using the Common Lisp reader and
+  macros to implement almost all of its features. This new version will be a proper interpreter.
 
 
-* Data Types
+** Inspirations/Credit
 
-  At the center of fn is a streamlined, minimalist type system. I've done my best to keep it
-  conceptually simple and to keep the number of operators supporting types small. (I think I succeeded
-  on this count-- all type behavior can accessed with only 8 special operators, of which 3 are
-  functions).
-
-** Basics: Objects, Types, and Schemas
-
-   Every value in fn is an object. Basically, this is anything you can assign a variable to. Every
-   object has a type, which determines how the object behaves, and every type is described by what we
-   call a schema.
-
-   Most objects in fn can be thought of collections of addressable slots, each of which contains
-   another object. The primary means of interacting with objects comes from accessing these slots.
-   There are, in addition, primitive types like integers, floating-point numbers, and symbols, which
-   do not have any slots, and special types like lists which have slightly different semantics from
-   the usual boxes-of-slots types of objects.
-
-   Every object has a unique type, which is represented by a symbol and may be accessed with the
-   `type-of' built-in function (not yet implemented). This symbol is used to look up the corresponding
-   schema, which is what we call the data structure which determines all type-specific behavior.
-
-   Schemas in fn perform a similar function to classes in languages like Java, insofar as they contain
-   the information required to create and manipulate objects of a given type. In fn, schemas are
-   provide functions to construct objects of the described type, to access their slots, and to do
-   pattern matching. A schema need not necessarily implement all of these features-- for instance,
-   there are pattern schemas which throw an error when used for anything other than pattern matching,
-   and data structures are immutable by default, meaning that the setter simply emits an error.
-
-   There are two ways to define a new schema: the keywords `defdata' and `deftype'. `defdata' provides
-   a convenient way to define record types which automatically implement sane pattern matching and
-   access. `defdata' should be appropriate for the vast majority of type definitions. `deftype' is
-   `defdata''s generalized big brother. Where defdata simply defines a transparent record data type,
-   deftype creates a schema with private internal slots and user-defined methods for construction,
-   access, and pattern matching. The syntax for `defdata' is demonstrated below:
-
-   #+BEGIN_SRC fn
-     ;; in general, defdata syntax is:
-     (defdata NAME (CONSTRUCTOR-ARGS ...) OPTIONS ...)
-     ;; the slot names are determined automatically from the constructor argument list
-
-     ;;; Examples:
-     ;; Type with three slots: x, y, and z. The constructor takes three positional arguments
-     (defdata Vec3 (x y z))
-     ;; Type with two slots: name and mail. The constructor takes two required keyword arguments
-     (defdata Contact (:name name :mail mail))
-
-     ;;; Note: We use capital letters to start words in type names. However, we still use dashes for
-     ;;; spaces, so e.g. String-Stream is a good type name, but string-stream, StringStream, or
-     ;;; String_Stream are all bad.
-
-     ;; make a few vectors. The constructor function shares the type name
-     (def
-       e1 (Vec3 1 0 0)
-       u (Vec3 1 -1 1)
-       v (Vec3 -1 1 0))
-
-     ;; make a few contacts
-     (def
-       alice (Contact :name "Alice" :mail "alice@lose.rs")
-       bob (Contact :name "Bob" :mail "bob@lose.rs"))
-
-     ;; this function uses pattern matching to decide its behavior. Notice how the Contact pattern
-     ;; corresponds directly to the argument list
-     (defn mail-unless-bob (x)
-       (case x
-         (Contact :name "Bob" :mail m)
-           (String "Oops, it's Bob")
-         (Contact :name n :mail m)
-           (String  "Got it, it's " m)))
-   #+END_SRC
-
-   `deftype' does not yet have its interface planned. My thought currently is actually to bake this
-   functionality into defdata by adding options, such as (:construct ...), (:match ...) which can
-   override the form. For instance, here's a List schema which works by using Common Lisp functions
-   from within fn:
-
-   #+BEGIN_SRC fn
-      (defdata List (v)
-        ;; Construct using the List form and the new keyword to set v to a CL list.
-        (:construct (& contents)
-          (new 'List (CL:APPLY #'CL:LIST contents)))
-        ;; Match gets passed quoted pattern arguments and returns a dict of variable bindings.
-        (:match (& args)
-          (list-matching-code args))
-        ;; Get a list of variable names from the pattern arguments. This is required for lexical variable
-        ;; resolution in match forms. It's somewhat of a leaky abstraction, but I can't think of a better
-        ;; way to allow general pattern matching.
-        (:match-vars (& args)
-          (list-match-vars-code args))
-        ;; Getter just uses CL:NTH
-        (:get (instance slot)
-          (CL:NTH slot (slot-value instance 'cell)))
-        ;; Setter uses CL:SETF
-        (:set (instance slot value)
-          (CL:SETF (CL:NTH slot (slot-value instance 'cell)) value)))
-
-      ;; car and cdr use slot-value
-      (defn car (list)
-        (CL:CAR (slot-value list 'cell)))
-      (defn cdr (list)
-        (CL:CDR (slot-value list 'cell)))
-
-      ;; example of a schema which doesn't create a constructor or getter
-      (defdata SecretType (secret)
-        ;; A value of false for construct causes the constructor not to be created. The object may still be
-        ;; instantiated using new.
-        (:construct false)
-        ;; Likewise, when get is false, you must use slot-value to access slots.
-        (:get false)
-        ;; When set is false, the data type is immutable (this is the default). This can also be true,
-        ;; which allows fields to be set using (set! (slot-values)) but not (set! (@)).
-        (:set false)
-        ;; When match is false, pattern matching on the schema causes an error.
-        (:match false)
-        )
-
-     ;; example of a schema which doesn't implement all operations
-     (defdata Unconstructible ()
-       ;; This type can't be instantiated, not even using new.
-       (:instantiable false))
-
-   #+END_SRC
-
-   This way you can choose to use to use
+fn's design was strongly inspired by Clojure, Python, Common Lisp, and Haskell. All four of those
+are great programming languages. Honestly, if I could get a full version of Clojure that didn't need
+the JVM or the CLR, I might not have bothered making a new programming language, although I really
+don't care for pure functionality as much as Rich Hickey. In that respect I prefer Common Lisp. When
+you get down to it, Common Lisp can be massaged into a very good language and development
+environment using FOSS tools and libraries such as Quicklisp, Alexandria, and Emacs+SLIME. Common
+Lisp can be further customized to the extent that even built-in special forms and syntax can be
+overwritten, which is what I used to prototype early versions of fn. However, I have two serious
+problems with Common Lisp. Firstly, it is too much work to configure a Common Lisp environment
+compared to, say, Python or Haskell, which are essentially ready to go out of the box. While this
+can be overcome by patience, a more significant problem is that since Common Lisp is built out of
+so many different pieces, it feels very inconsistent in a way that is often jarring. Thus, I set out
+to build a programming language just, for myself, that took the good parts of Common Lisp and added
+some modern features.
 
 
-** Generic Operators (new, @, slot-value, set!)
+* New parameter lists
 
-   If you read the Basics section, you saw these operators floating around with no explanation. Here
-   we remedy that. These four operators provide a generic object manipulation interface. Together,
-   they expose sufficient functionality to create data types which have highly customized behavior.
+  The goal with FN's new parameter lists is to create simpler, terser syntax while maintaining
+  important features, namely keyword arguments, optional arguments, and variadic arguments. To
+  achieve this. To achieve this, we use Scheme-style optional argument syntax. Since keywords as
+  such do not exist in FN, we use quoted symbols to denote keyword arguments. Other than this
+  change, calling a function with keyword arguments works identically to how it works in Common
+  Lisp. On the parameter list side of things, keyword arguments are denoted identically to normal
+  positional or optional arguments, except that the symbol name is quoted. Thus it is possible to
+  make required keyword arguments.
 
-   First of all, there is the `new' function, which takes a symbol corresponding to a type name as its
-   first argument. The remaining arguments intialize the slots of the object. These arguments are the
-   same as the default constructor arguments. However, when a custom constructor is specified, `new'
-   still allows you to instantiate an object's slots directly, bypassing the constructor altogether.
-   `new' can also be used to instantiate types with no constructor.
-
-   `new' should only ever be used to implement custom construction behavior, not for general-purpose
-   instantiation.
-
-   Next, we'll look at the getters: `@' and `slot-value'. As with `new' and the default constructor,
-   under normal circumstances, these two operators behave the same way. They both take two arguments,
-   an object and a slot name, in that order, although @ may accept more arguments which will be used
-   recursively to descend into the structure of an object.
-
-   The difference is this: `slot-value' directly accesses the slots of an object, while `@' uses the
-   getter code provided by the schema. An instructive example of this is the list data type. Lists
-   actually do not have any slots in the current implementation, so `slot-values' will always fail on
-   them. However, `@' may access the elements of a list using the natural numbers (from 0) as slot
-   values. As before, `slot-value' should only be used in implementing custom type behavior, where
-   `@' should be used for general purpose access.
-
-   Finally, we arrive at `set!', our setter. Data types are immutable by default, so `set!' should be
-   used sparingly for setting slot values. `set!' is the generic assignment operator. It can update
-   the values of variables, but it can also write to the slots of objects using the syntax `(set! (@
-   OBJECT SLOT) NEW-VALUE)' or `(set! (slot-value OBJECT SLOT) NEW-VALUE)'. As before, the latter
-   should be used only in certain circumstances directly involving the type system, while the former
-   is good for general purpose access.
-
-
-** Polymorphism via Protocols
-
-   Polymorphism in fn is implemented via protocols. A protocol is a group of functions, which we call
-   methods, whose behavior is decided based on the types of certain arguments (generic arguments).
-   Protocols are defined using `defproto'. Afterwards, the sets of types which implement each protocol
-   are defined using `defimpl'. To give you a feel for the syntax, here's an example of a protocol on
-   two types which is used to multiply two values (possibly non-commutatively).
-
-   #+BEGIN_SRC fn
-     ;; upper case first letters for protocol names, lowercase names for methods
-     (defproto Mul (L R)
-       ;; body contains method signatures where L and R are interpreted as generic arguments.
-       (mul (L R)
-         ;; function options (e.g. memoize, curry, type) have to go here.
-         {:doc "Used by `*' to decide how to multiply objects of arbitrary types."}))
-
-     ;; implement multiplication of strings by integers on the right. Integers duplicate the string n
-     ;; times, so (mul "string" 4) => "stringstringstringstring". Multiplication is commutative by
-     ;; default.
-     (defimpl Mul (String Int)
-       ;; method syntax is parallel
-       (mul (str i)
-         ;; inefficient recursive algorithm
-         (if (<= i 0)
-           ""
-           (concat str (mul str (- i 1))))))
-
-     ;; finally, we can use the Mul function to decide if two types implement it:
-     (Mul 'String 'Int) ;=> true
-     (Mul 'Int 'String) ;=> false
-     (Mul 'Int 'Int) ;=> true (provided by fn)
-   #+END_SRC
-
-   There's no need to limit ourselves to a single method per protocol, however this is often
-   sufficient, and we don't encourage abusing protocols. Use them where the abstraction is
-   appropriate.
-
-
-* New argument lists
-
-  Common Lisp's syntax for argument lists is great because it's unambiguous,
-  easy to remember, and powerful. Common Lisp's syntax for argument lists is bad
-  because it's verbose, ugly (subjective), and does not run parallel to the
-  syntax for function calls.
-
-  The goal with FN's new lambda lists is to give the language a more coherent
-  interface than what we currently have in Common Lisp. That is, we would like
-  the syntax for argument lists to look more like actual function calls.
-
-  For starters, we simplify the types of arguments that we allow in FN. We now
-  only have optional, positional, keyword and rest arguments, with the
-  restriction that keyword and rest arguments can not be mixed in the same
-  argument list. Next, replace &REST with &. It says enough. Moreover, we forget
-  about &OPTIONAL and &KEY-- optional forms are now just lists, and keyword
-  forms are actual keywords. This is a taste of our new argument lists:
+  Variadic arguments can be accepted using the ampersand symbol (&) followed by a variable name for
+  the list of trailing arguments.
 
   #+BEGIN_SRC fn
-  (defn func (positional-arg (optional-arg "init") :keyword-arg (keyword-arg "key-init"))
+  (defn func (positional-arg (optional-arg "init") ('keyword-arg "key-init"))
     (function-body))
   #+END_SRC
 
@@ -277,704 +76,417 @@
 
   (defun sort (seq &key (test #'< test-p) (ascending t)) ...)
   ;; => keyword arguments replace &key
-  (defn sort (seq :test (test #'<) :ascending (ascending t)) ...)
+  (defn sort (seq ('test #'<) ('ascending t)) ...)
   #+END_SRC
-
-  This also gives us the ability to define non-optional keyword arguments via
-  the syntax (:keyword-arg keyword-arg) (where the arg is a symbol, not a list).
 
   #+BEGIN_SRC fn
   ;; define a function requiring a keyword argument
-  (defn func (:req-key req-key :opt-key (opt-key "default")) 
+  (defn func ('req-key ('opt-key "default")) 
     (function-body))
 
   (func) ;=> error (needs req-key)
-  (func :req-key 6) ;=> okay (opt-key = "default")
-  (func :opt-key 9) ;=> error (needs req-key)
-  (func :req-key 6 :opt-key 9) ;=> okay
+  (func 'req-key 6) ;=> okay (opt-key = "default")
+  (func 'opt-key 9) ;=> error (needs req-key)
+  (func 'req-key 6 'opt-key 9) ;=> okay
   #+END_SRC
 
-  These non-optional keywords are especially useful when defining new data types
-  via defdata.
 
+* Type System 
 
-* FN Code Conventions
+** Object system
 
-  This one has personal significance because readability is always one of the
-  biggest complaints normies have about Lisp. We address this in almost every
-  aspect of fn's design, for instance by keeping the core language very small,
-  reusing interfaces wherever possible (see arg lists), and minimizing the paren
-  count (e.g. by removing extra parens from cond and let). However, having a
-  clear set of code conventions is also very important for writing readable
-  code.
+New types can be defined using the ~deftype~ special form. Types are first-class objects and invoking
+~deftype~ causes creation of a global type object of the specified name. However, there is no way to
+create new type objects other than by using ~deftype~, i.e. there are no non-global types.
 
-  I have two problems with how most LISP code is formatted (other than all the
-  bad naming conventions):
-
-  - Too many levels of indentation
-  - Too many consecutive closing parens
-
-  That's it.
-
-
-** Indentation
-
-Indentation is arguably the most important convention to decide upon, because it
-is the most complicated thing to implement in the text editor. My emacs mode
-should be able to automatically indent all built-in forms as well as normal
-function calls
-
-All macro bodies should be indented two spaces relative to the opening paren
-that started them. Lines longer than 80 characters should be avoided. To be
-clear, not all macros have bodies, and forms such as `and' and `or' can be
-indented according to normal function rules.
-
-
-*** Function arguments
-
-    #+BEGIN_SRC fn
-    
-    #+END_SRC
-
-
-*** Definitions
-
-    At the time of writing, there are 20 special operators planned for fn. Eight
-    of those are definitions, although def, def*, and defvar are different
-    because they can bind. For these operators, observe the conventions for
-    alternating pairs operators. Otherwise, we will observe the following
-    conventions:
-
-    #+BEGIN_SRC fn
-    (defform name arg-list ;omit arg-list where applicable
-      ;; indent two spaces for all body forms
-      (body-line1)
-      (body-line2)) ;closing paren on same line
-
-    ;; e.g.
-    (defdata Contact (:name name :mail mail))
-
-    (defn factorial (n)
-      (if (= n 0)
-      ;; two levels indent for if, see other special forms
-      1
-      (* n (factorial (- n 1)))))
-    #+END_SRC
-
-
-*** Alternating pairs
-
-    Many of our special forms contain lists whose arguments are processed
-    pairwise. For example, the variable definition part of let and the bodies of
-    cond and case. For these we observe the following convention: either put
-    both expressions on the same line, or else indent the second component of
-    each pair two levels deeper than the one before.
-
-    #+BEGIN_SRC fn
-    (case lst
-      [] "empty" ;short clauses go on one line
-      [[] & _]   ;longer clauses go on the next line
-        (string "empty head found") ;indent 2 spaces deeper
-      (hd & tl)  ;put multiline consequences in a do block
-        (do
-          (do-something-with-head hd)
-          (long-expression-with-tail tl)))
-
-    (let (1liner (short-expr) ;short definitions on one line
-          multi-liner ;align with previous variable name
-            (much-longer-expression :with-params some-params)
-          (pattern a _) ;here we could use either convention
-            (do-something-with a))
-      (do-something-with-these-vars 1liner multi-liner))
-    #+END_SRC
-
-
-* design ideas
-
-  - parentheses denote code objects. quote and backquote return code objects
-    that can be used by the program. Unquoted code is evaluated. Code objects
-    are made out of primitive types, symbols, and conses.
-  - square brackets are for lists (and consequently trees). Lists are singley
-    linked in classic lisp fashion. We use the ampersand (&) instead of the dot
-    for inline conses.
-  - rejected idea (don't repeat this mistake): & is a function so (& a b c) :=
-    [a b & c].
-  - Types are first-class objects. Types are also Callables, and calling a type like a function
-    invokes its constructor
-
-
-* Standard Library
-  
-** Built-in data types (and how they're made)
-
-   - bool :: true or false (literals)
-   - int :: integer (literal)
-   - float :: floating-point number (literal)
-   - string :: utf-8 string, is-string (literal)
-   - list :: singley-linked list (list and cons functions)
-   - vec :: fixed-width vector (vector function)
-   - dict :: (immutable?) dictionary, (dict function)
-   - fn :: function. Make 'em with fn. Would like to parameterize this type
-           eventually
-   - bytes :: vector of literal bytes. Used for FFI biz. Not sure how to
-              construct it (yet)
-
-              
-** Type tests
-
-   - is-bool
-   - is-int 
-   - is-float
-   - is-string 
-   - is-char :: check for characters
-   - is-list
-   - is-vec
-   - is-dict
-   - is-bytes
-
-
-** Things to copy from other people:
-
-   - arrays, linalg, random (from NumPy)
-   - map, reduce, filter, zip (from every good pl)
-   - threading macros (from Clojure)
-
-   
-* list of syntax characters
-
-- () for code
-- [] creates lists (evaluates arguments)
-- {} creates dicts (evaluates args)
-- $ creates anonymous functions (only when alone)
-- # used for characters and dispatch (rethink?)
-- ' quoting
-- ` and , quasiquoting
-- : keywords, symbol modules
-- \ escape next char
-- ; comments
-
-
-non-alphanumeric characters used in identifiers
-
-- ! as a suffix indicates mutation (it's like we're yelling!)
-- @ by itself is the universal accessor
-- & by itself denotes rest arguments
-- *, +, /, =, <, >, _, - (normal identifiers)
-
-
-Special characters from CL that are no longer special:
-
-- || for multi-char escapes
-- . for dotted lists (what a dumb useless thing)
-
-
-Characters reserved for future extensions
-
-- ~, ^, %, ?, ., and |
-
-
-*Ideas*
-
-- Perhaps programmers should be encouraged to make use of $-args in their own
-  macros in order to further promote consistency in the language, for instance
-  to automatically create gensyms in macros.
-- Maybe drop the ! convention-- since global variables are immutable by default,
-  it is less crucial to keep track of state changes. Maybe not, though, as
-  constant globals can still contain mutable data structures (we'll think about
-  that though-- possibly add an immutable flag to instances? (would have to make
-  lists, dicts immutable by default))
-- It would be cool if we could drop the # syntax altogether-- presently all it
-  does is read in characters and alternative-radix numbers (could be done with
-  0x00 syntax). Perhaps we could do this by taking the Javascript approach
-  (strings of length 1 are single characters)
-- I also like single quoting for string syntax, but I think it's important to
-  lisp that we leave quoting characters alone. It's not such a hardship to use
-  double quotes-- the idiots using C and Java have been doing it for ages (smart
-  people have to do it too).
-
-
-* Versions
-
-** Version conventions
-
-We will use the convention three number (major.minor.patch) release numbering.
-
-There are special rules for major version 0, but in general we will
-
-- increment the patch number for substantial bug fixes, optimizations, and minor interface
-  improvements not related to the core language or the standard library (i.e. changes to the
-  highlighting and the emacs mode)
-- increment the minor version number for any compatibility breaking changes to the standard library,
-  the addition of new library features, minor language changes, and additions to the language that do
-  not break existing code (except for possibly introducing name collisions). Also increment it for
-  changes to the tools and platform that don't break old interfaces
-- increment the major version number for substantial changes or additions to the core language,
-  platform, and tooling. Example: when we ditch Common Lisp and move on to our own custom vm, this
-  will be a major version change.
-
-Patch increments will happen on an as needed basis. I intend to test fn by writing a lot of code in
-it. I'll fix bugs as I go and bump the patch number when I feel like I'm at a logical place to do so.
-Don't expect to see a ton of these early on. Minor and major version releases will have milestone
-lists, and I will only increment the version number after reaching all the goals.
-
-Since we don't expect to have a stable language or standard library for some time, we will change the
-rules for the version 0 release series, with the goal of having a stable language, library, and tools
-by the time we hit 1.0.
-
-
-** Version 0.0.0 Milestones
-
-   The goal for version 0.0.0 is to have the core language fully implemented except for symbols and
-   modules. Our milestones are
-
-   - 90% implementation of data structures (defdata) and protocols (defimpl, defproto). We'll be
-     missing the generalized deftype, and we'll be missing more sophisticated options
-   - emacs major mode with mostly-correct indentation and syntax highlighting
-   - all core special operators implemented: def, def*, defdata, defimpl, defmacro, defn, defproto,
-     defvar, @, and, case, cond, do, if, fn, let, new, set!, quote, quasiquote
-   - case sensitive reader with delimiter, $, and quoting implemented
-   - fn package that exposes all language forms. I should be able to do (fn-impl:boot-fn) and write fn
-     code.
-   - making # and . into normal characters
-
-
-** Version 0.1 Milestones
-
-   For version 0.1, we want to have the core language and tooling fully implemented. If we do it
-   right, then from this version all the way up to version 1.0, the only substantial changes will be
-   in module system and standard library.
-
-   - FN-READ, FN-EVAL, and FN-PRINT functions in the CL-FN package that let Common Lisp code embed fn
-   - signal system for error handling and control flow
-   - more general type definition
-   - stable core language syntax, meaning we have to address quasiquoting, the colon, and the dot
-   - differentiation of the empty list and false
-   - emacs command to send fn code to a SLIME repl
-   - change how function application works
-   - add the Callable interface
-   - decide on a standard library naming convention
-   - add the Sequence interface and libraries
-   - implementation of input/output streams
-   - automatic type checks via type annotations
-
-
-   *Notable Missing Features*
-
-   - module system
-   - doc strings and help function
-   - stack traces/debugging features
-   - bit vectors
-
-
-** Version 1.0 Milestones
-
-   Version 1.0 will be a usable programming language with actual tooling and a standard library that
-   lets it do pretty much anything you'd want to do in a UNIX environment. At this point, it will
-   still all be Common Lisp under the hood, but that will be abstracted away to being a simple
-   implementation detail. After version 1.0, we'll flesh out the standard library a bit, but the next
-   big milestone will be ditching Common Lisp entirely in favor of C++ and LLVM.
-
-   Once I reach the first release candidate, I'm going to take a break and develop a substantial
-   amount of code in fn. My first project will be a VM orchestrator. During this time, I'll be
-   adjusting language features, fixing bugs, and extending the standard library as needed.
-
-   - I will have written a lot of code in fn and determined that it is useful
-   - the core language will be stable
-   - documentation functions work
-   - foreign function interface
-   - module system including library path, multi-file module declaration, submodules, imports and
-     qualified imports, file imports, and reloading
-   - standard library includes threading, filesystem, file I/O, IPC and network sockets, system shell
-     commands, subprocesses, command line arguments, and environment variables (all the usual UNIX
-     stuff)
-   - consistent error handling interfaces across the entire standard library
-   - emacs major mode has its own shell
-   - emacs mode can collapse code forms (particularly function options/doc strings)
-   - immutable reimplementation of dicts
-   - defdata has options and knows how to use them (i.e. mutable, immutable)
-   - debugging including programmatically-accessible stack traces and breakpoints, plus global debug
-     options
-   - different optimization levels (i.e. disable type checks)
-
-
-   *Notable Missing Features*
-
-   - port implementation from Common Lisp to C++
-   - compiler via LLVM
-   - scientific and symbolic computing in the standard library
-   - regex in the standard library
-   - package/module manager
-   - web server
-
-
-* Object System
-
-** What's an object
-
-An *object* in fn is a generalized key-value store. This means that majority of object system
-functionality is exposed via two operations, *getting* and *setting*. Getting is exposed via the ~(@
-<OBJ> <KEY>)~ special form, while setting is exposed via the ~(set! (@ <OBJECT> <KEY>) <VALUE>)~
-special form, and these are referred to respectively as the *generic getter* and *generic setter*,
-or collectively as the *generic accessors*.
-
-Every *object* in fn is described by a single *type*, which defines the behavior of the generic
-accessor on the object, as well as the internal representation. Types also specify object
-construction and pattern matching behavior, (see below). The functions which implement generic
-accessor behavior are referred to as the type's *getter* and *setter* respectively.
-
-This is where objects diverge from normal key-value stores. The getter and setter of a type may be
-any general functions which accept the correct arguments. That is, the getter must take two
-arguments: an instance of the corresponding type and an object representing a key. Likewise, the
-setter must accept three arguments: an instance, a key, and a new value to "store" with that key.
-
-The keys which a type's accessors accept are called *gettable indices* and the *settable indices*.
-Most objects are either immutable, meaning they have are no settable indices, or else have the same
-settable and gettable indices. In both of these cases, we refer to the keys simply as *indices*
-convenience. (The singular form of indices is *index*).
-
-The majority of user-defined objects should behave like normal key-value stores. The ~deftype~
-operator, which is used to define new types, automatically implements this behavior if no accessors
-are specified.
-
-
-*** Internal Representation, Instantiation, & Construction
-
-With the exception of certain built-in types and foreign types[1], every object is internally
-represented by a true key-value store. For lack of a better name, we call the keys in this structure
-*internal slots*. In order to minimize confusion, we will never, ever abbreviate this as *slots*.
-Internal slots are accessed using the special operator ~(internal-slot-value <obj> <key>)~. Internal
-slots access should be completely abstracted away in library code, and as a rule of thumb, you
-should only access the internal slots of objects which you've defined yourself.
-
-To create an instance of a type, you must at minimum provide values for the internal slots. This is
-called *instantiation*, and is done using the ~(instantiate <TYPE-NAME> & <INTERNAL-SLOT-VALUES>)~
-special form. As with ~internal-slot-value~, ~instantiate~ should only be used sparingly and within
-library code.
-
-With some exceptions (see "Uninstantiable & Unconstrible Types"), every type also has a
-*constructor*, which is a function that invokes instantiate to create instances of the object.
-Constructors share a name with their type, e.g. the ~List~ type is constructed by ~(List ...)~. The
-purpose of the constructor is to wrap the instantiate form so that implementation details can be
-abstracted away. A constructor may, for instance, allow variable numbers of arguments to be passed
-to a container data type.
-
-[1] foreign types coming soon
-
-**** TODO Uninstantiable and Unconstructible Types
-
-
-*** TODO Special Built-In Types
-*** TODO Pattern Matching
-*** TODO Foreign Types
-
-
-** Object Definition with ~deftype~
-
-~deftype~ syntax:
+The *internal slots* of an object are the key-value pairs it contains. They can be accessed with
+~slot-value~. The *constructor* of a type is a function that creates new instances of a type. It is
+usually generated automatically by ~deftype~, however it may be manually specified via the options.
 
 #+BEGIN_SRC fn
-(deftype NAME ARG-LIST
-  :instantiable <BOOLEAN>
-  :immutable <BOOLEAN>
-  :construct <FUNCTION>
-  :get <FUNCTION>
-  :set <FUNCTION>
-  :match <FUNCTION>)
+;; Type and protocol creation
+(deftype Type-Name (slots...) options...)
+;; Instantiate an arbitrary object by manually assigning slot values
+(instantiate TYPE SLOT-VALUES...)
+;; to invoke the constructor, use the object as a Callable instance
+(TYPE ARGS...)
+
+;; Access slots directly
+(slot-value OBJ SLOT)
+(set (slot-value OBJ SLOT) NEW-VALUE)
+
+;; Access slots via the generic accessors
+(@ OBJ SLOT)
+#+END_SRC
+
+
+** Protocols and Implementation
+
+A protocol is a group of functions whose behaviors are decided based upon the types of some of their
+arguments, called dispatch arguments.
+
+#+BEGIN_SRC fn
+(defproto Proto-Name (types...)
+  (function-name-1 arg-list options...)
+  (function-name-2 arg-list options...))
+(defimpl Proto-Name (types...)
+  function-name-1 implementation-function-1
+  function-name-2 implementation-function-2)
+
+;; Example: the built-in Mul protocol
+(defproto Mul (l r)
+  (mul (l r) "Multiply two numbers"))
+
+;; Example: Implementing multiplication on a custom 2D vector type
+(deftype Vec2 (x y))
+
+(defn vec2-scalar-mul (s v)
+  "Multiply a vec2 by a scalar"
+  (Vec2 (* s v.x) (* s v.y)))
+
+
+;; define for all four scalar combinations
+(defimpl Mul (Int Vec2)
+  mul vec2-scalar-mul)
+(defimpl Mul (Vec2 Int)
+  mul $(vec2-scalar-mul $1 $0))
+(defimpl Mul (Float Vec2)
+  mul vec2-scalar-mul)
+(defimpl Mul (Vec2 Float)
+  mul $(vec2-scalar-mul $1 $0))
+
+(* (Vec2 1.0 2.3) -2)
+;;=> (Vec2 -2.0 -4.6)
+(* 1.1 (Vec2 1.2 1.3))
+;;=> (Vec2 1.32 1.43)
+
+#+END_SRC
+
+
+** Built-in types
+
+The following types are built into fn.
+
+*Atomic types*
+- Symbol :: symbol
+- Bool :: boolean True or False
+- Null :: unassigned value 
+- Int :: integer (not necessarily fixed int)
+- Float :: floating point number
+- String :: character string
+
+*Structure types*
+- List :: singley-linked list
+- Dict :: general-purpose hash table
+- Arr :: generic one-dimensional (for now) array
+- Type :: the type of types
+
+Foreign data structures and bit array types will be added in the future.
+
+
+** Built-in Protocols
+
+- Add :: used for the + operator
+- Sub :: used for the - operator
+- Mul :: used for the * operator
+- Div :: used for the / operator
+- Callable :: allows the type to be called like a function
+- Get :: specifies behavior of @
+
+
+** Misc Type Functions
+
+Use ~(type-of OBJ)~ to get the type of an object.
+
+The slots of an object can be accessed directly using ~(slot-value OBJ SLOT)~. Mutable slots can be
+set using ~(set (slot-value ...) ...)~.
+
+
+* Version 0 Spec
+
+If anyone other than me ever tries to read this, I'm sorry. This is a "complete" specification of
+version 0 of the fn programming language (i.e. complete enough for me, the language designer, to
+remember the decisions I've made so far).
+
+** Flow control
+
+- cond
+- do
+- if
+- let
+
+*if* works as it always does and *do* works like ~PROGN~ does in Common Lisp or ~begin~ in Scheme.
+
+*cond* has its syntax changed so omit the second level of parentheses. Instead, it takes an
+alternating series of tests and results, and automatically groups them into pairs.
+
+#+BEGIN_SRC fn
+  ;; syntax
+  (cond
+    test0
+      result0
+    test1
+      result1)
+
+  ;; example. returns "fizz" if x is a multiple of 3, "buzz" if it's a multiple of 5, "fizzbuzz" if
+  ;; it's both, and x as a string if it's neither.
+  (defn foo (x)
+    (cond
+      (= (mod x 15) 0) "fizzbuzz"
+      (= (mod x 5) 0) "buzz"
+      (= (mod x 3) 0) "fizz")
+      (True (String x)))
+#+END_SRC
+
+
+~let~ has been modified in a similar way, doing away with the second layer of parentheses in the
+binding specs
+
+#+BEGIN_SRC fn
+  (let (a 2
+        b 3
+        c 4)
+    (+ a b c))
+  ;; => 9
+
+  ;; let behaves like scheme's letrec
+  (defn reverse-map (f lst)
+    (let (iter
+           (fn (acc src)
+             (if src
+                 (iter (cons (f src.hd) acc)
+                       src.tl)
+                 acc)))
+      (iter [] lst)))
+                   
+#+END_SRC
+
+
+** Function creation
+
+- fn
+- $ (dollar sign syntax)
+
+
+** Type System 
+
+Version 0 will implement the complete type system as described in Type System at the top level of
+this document.
+
+
+** Generic accessors
+
+*** @
+
+The generic getter is ~@~. It gets values from objects given some key.
+
+#+BEGIN_SRC fn
+;; function signature for @
+(defn @ (object key0 & keys)
+  ...)
 #+END_SRC fn
 
-*FIXME: perhaps move matcher behavior to a defpattern operator*
+When multiple keys are passed as arguments, each successive key is used to access the value from the
+previous key. E.g. ~(@ obj key1 key2)~ is equivalent to ~(@ (@ obj key1) key2)~.
 
-Description of arguments:
-
-*Note:* any method may be assigned a value of *False*, in which case it will emit an error, or
-*True*, which will cause the default method to be used.
-
-- NAME :: a symbol naming this type. Must be unique w/r/t all existing types
-- ARG-LIST :: an argument list with the same syntax used by ~fn~. This is used to determine the
-              behavior of the default methods, and the variable names in the denote the type's
-              internal slots.
-- ~:instantiable~ :: whether instances of this object can be created with ~instantiate~.
-                    Uninstantiable types are useful for declaring new patterns for ~case~. If
-                    ~False~, all methods will default to ~False~. *Default: ~True~.*
-- ~:immutable~ :: if ~False~, the internal slots of this object can modified. If ~True~, attempts to
-                  modify them will result in an error. *Default: ~True~.*
-- ~:construct~ :: Function used to create instances of this type. This will be bound to globally to
-                  the type name. If ~False~, no function is bound. *Default: ~True~.*
-- ~:get~ :: Function of two arguments to be used by ~@~. The first argument will always be an object
-            of the corresponding type, and the second is an object representing a slot. *Default:
-            ~True~.*
-- ~:set~ :: Function of three arguments to be used by ~set!~. The first argument will always be an
-            object of the corresponding type, the second represents a slot, and the third is the
-            right-hand side of ~set!~. *Default: ~True~.*
-- ~:match~ :: Function of two arguments: a list of pattern arguments and an object on which to do
-              matching. The function should return a dictionary where the keys are the symbols
-              returned by ~match-vars~. *Default: ~True~.*
-- ~:match-vars~ :: Function returning a list of symbols which would be bound by a successful
-                   matching operation. See *Why ~matcher-vars~?* for the rationale behind this
-                   method's existence. *Default: ~True~.*
+The default behavior for ~@~ on new types is to act like ~slot-value~.
 
 
-*** Default Methods
+*** dot notation (might remove)
 
-*Constructor:* Uses the type's arg-list to bind internal slots in a predictable way.
-
-*Getter:* Takes an internal slot and returns its value.
-
-*Setter:* Takes an internal slot and assigns it to the provided value.
-
-*Matcher:* Does arg-list matching.
-
-*Match Var Getter:* Returns the internal slot names
-
-
-*** Types
+The dot (.) is used as a shorthand for ~@~ when the object is a variable and the key is a symbol. For
+example, the following two expressions are equivalent:
 
 #+BEGIN_SRC fn
-(defdata type (:name name
-               :internal-slots (internal-slots [])
-               :instantiable (instantiable True)
-               :immutable (immutable True)
-               :constructor (constructor True)
-               :getter (getter True)
-               :setter (setter True)
-               :matcher (matcher True)
-               :match-vars (match-vars)
-               ))
+;; 1.
+object.slot
+;; 2.
+(@ object 'slot)
+#+END_SRC
+
+In fact, the reader converts the former expression to the latter before evaluation.
+
+Multiple dots can also be used to supply more keys:
+
+#+BEGIN_SRC fn
+object.slot1.slot2
+;; is equivalent to
+(@ object 'slot1 'slot2)
 #+END_SRC
 
 
-** Generic Object functions
+*** Default Callable (Potential alternative to dot notation)
 
-** Protocol Concepts
+The dot is an attractive syntax because it allows tree descent with the addition of only one
+character of syntax per depth. An alternative syntax would be achieved by giving all objects a
+default Callable protocol implementation that invokes ~@~ on the object with the specified arguments.
+E.g:
 
+;; this
+object.key.key2.key3
+;; would be replaced by this
+(object 'key1 'key2 'key3)
 
-** ~defproto~ and ~defimpl~
+I guess we could also do both, but that seems like overkill. I'm leaning towards keeping dot notation.
 
-** Built-in Types
 
-*Literals*
-- Float
-- Int
-- String
-- Symbol
+*** set
 
-*Other Primitive Types*
-- Bool
-- Null
-
-*Built-in Collections*
-- Dict
-- List
-- Array (coming soon!)
-- Bytes (coming soon)
-
-
-
-
-* Object System
-
-Here we go, let's try again.
-
-Anatomy of an object:
-
-- base type name
-- key-value store
-- protocol implementations
-- (constructor?)
-
-
-IMPLNOTE: Optimization. The way that typing will eventually be implemented is via tags.
-
-
-The "built-in" protocols:
-
-- @ (Get)
-- set! (Set)
-- case (Match)
-- call (Call)
-
-No inheritance. If you need to borrow all of the behavior from another data type, use a delegate.
-
-Idea: simplify the ~deftype~/~defdata~ form so it only does one thing: define data structures.
-
-(deftype <name> (<params> ...) <options> ...)
-
-<params> is a parameter list which describes the slots of the object in addition to the arguments
-accepted by the constructor.
-
-<options> is
-
-- :constructor (constructor True) :: could be a function, True, False, or Null. If True, use the
-     default constructor (based on params). If False or Null, a dummy constructor will be created
-     that emits an error when called. Otherwise, the constructor will call the function provided.
-- :doc (doc-string "") :: add a doc string to this type
-- ways to assign default matcher, setter, and getter automagically
-- ways to implement other
-- ? :auto-implement (auto-implement [Match Get Set]) :: list of protocols to automatically
-     implement
-
-How tf does this all work?
-
-- ~deftype~ creates an immutable global definition binding a type object to the given name. The Type
-  type implements Callable, which invokes the constructor when the type is used as a function.
-
-
-** Foreign types
-
-As of right now, the plan is to provide a bits primitive type which may be manually furnished with a
-value (e.g. a pointer returned from a foreign function call). In order to generate 
-
-
-* Object System
-
-(defdata Object (slots) 
-  options...)
-
-(defproto Object
-  )
-
-
-Conceit: you should be able to define things using only function calls. Maybe
-
-(define-symbol sym val (mutable False) (dynamic False))
-(new-type name slots (implementations False))
-(type-add-impl! type impl)
-(make-function parameters code (env (current-environment)))
-
-where (current-environment) returns a map from symbols to values representing all non-global
-variables.
-
-
-Here's a question: where should protocol implementations live?
-
-We don't like mutation if we can help it, but we still want to have types as first-class objects
-which can be created in local environments (if only to provide ad-hoc protocol implementations).
-
-The obvious answer is to mutate the type every time you add an implementation, but, that forces
-types to be mutable, so there's nothing preventing a stupid idiot from doing something really dumb
-like ~(set! (:implementations List) [])~. (EXCEPT THERE IS! I just shouldn't define ~set!~ on the
-Type Type. If you want to do awful things, you can use ~(set! (slot-value))~).
-
-
-* Object System
-
-fn provides the special form ~deftype~, which allows the definition of a new type of object. Objects
-are key-value stores. Types in fn are first class objects.
-
-Polymorphism is supported via *protocols*. A protocol is a collection of functions which change their
-behavior depending on the types of their arguments. Protocols can be implemented using
-
-
-* Namespaces
-
-I will assume in this section that namespaces are exactly the same as common lisp packages (because
-they will be at first).
-
-** Treatment of keywords
-
-Keywords right now are used only in the keyword parts of functions. The semantics of keyword
-arguments right now do not depend on the properties of keywords (beyond the fact that they represent
-unique constants), and truly could be used with any analogous data type (say, symbols).
-
-The nice thing about keywords a/o/t symbols is that they're package-independent. The nice thing
-about symbols a/o/t keywords is that they're package-dependent.
-
-Keywords are currently only used for keyword arguments. In the future, they may be made into
-Callable objects that can access object fields (that is, (:key x) expands to (@ x :key)). The
-downside of this is that it would require field names accessed by @ to be unique.
-
-
-** Syntax highlighting of quoted symbols
-
-I will change the syntax highlighter so that when individual symbols are quoted, they are
-highlighted like keywords.
-
-
-** Solution one: just axe keywords
-
-In this solution, we would remove the colon as a special character. Internally, then we would
-separate out the symbol name from the package name to test for equality in certain cases. This could
-be achieved by maintaining an extra symbol table
-
-
-*** Cons 
-
-- using ~(= x y)~ where X and Y are symbols is now ambiguous. Should it depend on the symbol name
-  only or should it also consider the package? How should we provide the extra information?
-- more complicated implementation is required for symbol equality checks
-- you lose the ability
-
-** Solution two: axe keywords but introduce packageless symbols
-
-In this solution, symbols belong to a special package by default.
-
-** Solution three: axe keywords and separate symbols from namespaces
-
-In this solution, symbols are no longer part of any package (for implementation there would be a
-special package). Then we will encode the current package in the lexical environment for use in
-symbol lookup. This will complicate name resolution semantics somewhat, but I think it will work
-semantically.
-
-One consistent solution (which shouldn't be too hard to implement):
-
-- you work in a single name space
-- dot ('.') is made into a normal syntax character
-- importing creates bindings which may or may not have dots in the names
-- (possibly) make def- words emit a warning/error when names contain dots
-
-A similar alternative:
-
-- importing creates bindings to namespace names (modules?)
-- dot is now a special character in symbol names which causes the part before to be treated as the
-  name of a module object.
-
-
-** Solution four: symbols are packageless, dot is special syntax for module access
-
-Symbols no longer have packages associated with them. Modules are introduced as first-class objects.
-To access the elements of a module, use dot syntax, e.g. ~(module.function ...)~. In general, this
-dot syntax should expand like ~(@ module 'function)~, or in other words, ~a.b.c.d~ would expand to
-~(@ a 'b 'c 'd)~, which is useful for object tree navigation.
-
-
-** Solution five: Move module resolution to evaluator
-
-Symbols are packageless. Now, evaluation happens in the context of some namespace. We call such
-namespaces modules and they are first class objects. More on that later.
-
-We can change the module of an evaluation using the ~(in-module <module> body ...)~ special form.
-
-Macro expansions are evaluated in the module in which the macro was defined.
-
-Maintain a stack of modules in the evaluator. We can access the stack from within macros in order to
-run code within a surrounding namespace. Notably, the special form ~(in-outer-module body ...)~
-allows us to run code in the module above ours. We can make this easier by modifying the quasiquote
-so that unquoting with ~,!~ (comma-bang) will result in an ~in-outer-module~ form. I.e.
+The generic setter is ~set~.
 
 #+BEGIN_SRC fn
-`(+ ,x ,!y)
-;; expands into ['+ x (in-outer-module y)]
+(defmacro set (place value)
+  ...)
+
+;; define a mutable variable
+(defvar x 27)
+x
+;;=> 27
+(set x 32)
+x
+;;=> 32
+
+;; mutate the field of an object
+(set obj.slot 'funk)
+;; equivalent w/o dot notation
+(set (@ obj slot) 'funk)
 #+END_SRC
 
-The main downside of this is that it introduces another potential error (in forgetting the comma or
-adding it). We will also add a new comma syntax, ~,!~ (comma-bang), which will allow unquoting
-without the ~in-outer-module~ form.
+The place can be a variable name, in which case the variable is mutated. It may also be an ~@~ form,
+which will invoke the generic
 
 
-* Modules and environments
+** Definition
 
-Unlike in Common Lisp, symbols in fn don't have packages. Instead, name resolution is done based
-upon the *module* in which the code/function/macro was defined.
+These are all the variable definition facilities in fn
 
-A *module* is a data structure which contains symbol-value pairs. It also has a name and a list of
-exported sybols. Modules may bind symbols to variables; such bindings may be either mutable or
-immutable. Independent of whether they are bound to variables, symbols also can be bound to macros.
+#+BEGIN_SRC fn
+;; define a constant variable
+(def VAR VALUE "Doc string")
+;; define a mutable variable
+(defvar VAR VALUE "Doc string")
+;; define a function
+(defn VAR (ARG-LIST...)
+  "Doc string"
+  (options FUNCTION-OPTIONS...)
+  FUNCTION-BODY) 
 
-The difference between exported and non-exported symbols in a module is that exported symbols may be
-accessed using single-dot notation (i.e. ~module.object~) whereas non-exported symbols use double-dot
-notation (i.e. ~module..internal-object~).
-
-The *environment* with respect to an evaluation is the module and the lexical bindings used to resolve
-names in that evaluation.
+#+END_SRC
 
 
+** Macros
+
+#+BEGIN_SRC fn
+;; define a macro
+(defmacro NAME (ARG-LIST...)
+  "Doc string"
+  MACRO-BODY)
+#+END_SRC
+
+Macros work in the usual lisp way, and they are unsanitary. Macro functions may return function
+objects as part of their outputs. This is encouraged as a way to prevent lexical variable
+definitions from colliding with global module or function names.
+
+*Note:* In the future, some facility e.g. a ~global~ special form may be introduced which allows global
+variables to be accessed from macros without needing to include them as literals. Such a form would
+possibly return a pointer object that unambiguous denoted the variable being referenced.
+
+
+** Pattern matching
+
+Will not be implemented with the first version
+
+
+** Standard Library
+
+- @
+- +,-,*,/
+- add,sub,mul,div (corresp. to Add, Sub, Mul, Div protocols)
+- call (w/ Callable protocol)
+- get (w/ Get protocol, used by @)
+- print
+- random
+- set (macro)
+- slot-value
+- type-of
+
+
+** Complete list of special operators
+
+- cond
+- def
+- defimpl
+- defmacro
+- defn
+- defproto
+- defvar
+- do
+- fn
+- let
+- quote
+- quasiquote
+- unquote
+
+
+** Syntax
+
+Syntax is standard lisp parenthesized prefix notation. The following are all the special syntax
+characters:
+
+$()[]{}\;"',.
+
+all other non-whitespace characters are symbol constituents, that is, they are parsed as atoms, i.e.
+as symbols or numbers.
+
+
+*** Delimiters
+
+In typical lisp fashion, () are the delimiters denoting lists. In addition, [] and {} are matched
+delimiters for reading lists and dicts. In fact, they are converted by the reader.
+
+[a b c] -> (List a b c),
+and
+{:a 0 :b 1} -> (Dict :a 0 :b 1)
+
+Also, "" reads UTF-8 strings. It uses C/C++ escape sequences because those are better than the lisp
+ones and support Unicodes. Get over it.
+
+
+*** Comments
+
+There are no multi-line comments in fn. Only line-end comments, started by semicolons, are
+supported.
+
+
+*** Dollar sign
+
+See function creation.
+
+
+*** Quotation
+
+Normal quote works as it usually does in Lisp. Quasiquote works the same but lacks a destructive
+splice.
+
+
+*** Escaping
+
+Escaping is when a backslash (/) character is placed in front of another character, thereby turning it
+into a symbol constituent.. Any character can be escaped in any context except for within a string, (where string
+escaping rules apply instead).
+
+
+*** Dot notation
+
+See Generic Accessors
+
+
+* Misc Notes and Ideas
+
+** Important idea: global pointers
+
+I think it would be very useful to introduce a "pointer" data type (a better name might be GUID,
+place, or address) which is simply an unambiguous reference to some global variable (possibly also
+local?). GUID syntax could start with #G (or something) and would be very much analogous to symbols
+in Common Lisp, in that GUIDs, like CL's symbols, would be standalone places to store objects. This
+also allows an elegant alternative to gensyms, i.e. randomly-generated, disposable places.
