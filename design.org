@@ -241,9 +241,6 @@
    appropriate.
 
 
-* Pattern Matching (TODO)
-
-
 * New argument lists
 
   Common Lisp's syntax for argument lists is great because it's unambiguous,
@@ -771,5 +768,213 @@ Description of arguments:
 - Array (coming soon!)
 - Bytes (coming soon)
 
+
+
+
+* Object System
+
+Here we go, let's try again.
+
+Anatomy of an object:
+
+- base type name
+- key-value store
+- protocol implementations
+- (constructor?)
+
+
+IMPLNOTE: Optimization. The way that typing will eventually be implemented is via tags.
+
+
+The "built-in" protocols:
+
+- @ (Get)
+- set! (Set)
+- case (Match)
+- call (Call)
+
+No inheritance. If you need to borrow all of the behavior from another data type, use a delegate.
+
+Idea: simplify the ~deftype~/~defdata~ form so it only does one thing: define data structures.
+
+(deftype <name> (<params> ...) <options> ...)
+
+<params> is a parameter list which describes the slots of the object in addition to the arguments
+accepted by the constructor.
+
+<options> is
+
+- :constructor (constructor True) :: could be a function, True, False, or Null. If True, use the
+     default constructor (based on params). If False or Null, a dummy constructor will be created
+     that emits an error when called. Otherwise, the constructor will call the function provided.
+- :doc (doc-string "") :: add a doc string to this type
+- ways to assign default matcher, setter, and getter automagically
+- ways to implement other
+- ? :auto-implement (auto-implement [Match Get Set]) :: list of protocols to automatically
+     implement
+
+How tf does this all work?
+
+- ~deftype~ creates an immutable global definition binding a type object to the given name. The Type
+  type implements Callable, which invokes the constructor when the type is used as a function.
+
+
+** Foreign types
+
+As of right now, the plan is to provide a bits primitive type which may be manually furnished with a
+value (e.g. a pointer returned from a foreign function call). In order to generate 
+
+
+* Object System
+
+(defdata Object (slots) 
+  options...)
+
+(defproto Object
+  )
+
+
+Conceit: you should be able to define things using only function calls. Maybe
+
+(define-symbol sym val (mutable False) (dynamic False))
+(new-type name slots (implementations False))
+(type-add-impl! type impl)
+(make-function parameters code (env (current-environment)))
+
+where (current-environment) returns a map from symbols to values representing all non-global
+variables.
+
+
+Here's a question: where should protocol implementations live?
+
+We don't like mutation if we can help it, but we still want to have types as first-class objects
+which can be created in local environments (if only to provide ad-hoc protocol implementations).
+
+The obvious answer is to mutate the type every time you add an implementation, but, that forces
+types to be mutable, so there's nothing preventing a stupid idiot from doing something really dumb
+like ~(set! (:implementations List) [])~. (EXCEPT THERE IS! I just shouldn't define ~set!~ on the
+Type Type. If you want to do awful things, you can use ~(set! (slot-value))~).
+
+
+* Object System
+
+fn provides the special form ~deftype~, which allows the definition of a new type of object. Objects
+are key-value stores. Types in fn are first class objects.
+
+Polymorphism is supported via *protocols*. A protocol is a collection of functions which change their
+behavior depending on the types of their arguments. Protocols can be implemented using
+
+
+* Namespaces
+
+I will assume in this section that namespaces are exactly the same as common lisp packages (because
+they will be at first).
+
+** Treatment of keywords
+
+Keywords right now are used only in the keyword parts of functions. The semantics of keyword
+arguments right now do not depend on the properties of keywords (beyond the fact that they represent
+unique constants), and truly could be used with any analogous data type (say, symbols).
+
+The nice thing about keywords a/o/t symbols is that they're package-independent. The nice thing
+about symbols a/o/t keywords is that they're package-dependent.
+
+Keywords are currently only used for keyword arguments. In the future, they may be made into
+Callable objects that can access object fields (that is, (:key x) expands to (@ x :key)). The
+downside of this is that it would require field names accessed by @ to be unique.
+
+
+** Syntax highlighting of quoted symbols
+
+I will change the syntax highlighter so that when individual symbols are quoted, they are
+highlighted like keywords.
+
+
+** Solution one: just axe keywords
+
+In this solution, we would remove the colon as a special character. Internally, then we would
+separate out the symbol name from the package name to test for equality in certain cases. This could
+be achieved by maintaining an extra symbol table
+
+
+*** Cons 
+
+- using ~(= x y)~ where X and Y are symbols is now ambiguous. Should it depend on the symbol name
+  only or should it also consider the package? How should we provide the extra information?
+- more complicated implementation is required for symbol equality checks
+- you lose the ability
+
+** Solution two: axe keywords but introduce packageless symbols
+
+In this solution, symbols belong to a special package by default.
+
+** Solution three: axe keywords and separate symbols from namespaces
+
+In this solution, symbols are no longer part of any package (for implementation there would be a
+special package). Then we will encode the current package in the lexical environment for use in
+symbol lookup. This will complicate name resolution semantics somewhat, but I think it will work
+semantically.
+
+One consistent solution (which shouldn't be too hard to implement):
+
+- you work in a single name space
+- dot ('.') is made into a normal syntax character
+- importing creates bindings which may or may not have dots in the names
+- (possibly) make def- words emit a warning/error when names contain dots
+
+A similar alternative:
+
+- importing creates bindings to namespace names (modules?)
+- dot is now a special character in symbol names which causes the part before to be treated as the
+  name of a module object.
+
+
+** Solution four: symbols are packageless, dot is special syntax for module access
+
+Symbols no longer have packages associated with them. Modules are introduced as first-class objects.
+To access the elements of a module, use dot syntax, e.g. ~(module.function ...)~. In general, this
+dot syntax should expand like ~(@ module 'function)~, or in other words, ~a.b.c.d~ would expand to
+~(@ a 'b 'c 'd)~, which is useful for object tree navigation.
+
+
+** Solution five: Move module resolution to evaluator
+
+Symbols are packageless. Now, evaluation happens in the context of some namespace. We call such
+namespaces modules and they are first class objects. More on that later.
+
+We can change the module of an evaluation using the ~(in-module <module> body ...)~ special form.
+
+Macro expansions are evaluated in the module in which the macro was defined.
+
+Maintain a stack of modules in the evaluator. We can access the stack from within macros in order to
+run code within a surrounding namespace. Notably, the special form ~(in-outer-module body ...)~
+allows us to run code in the module above ours. We can make this easier by modifying the quasiquote
+so that unquoting with ~,!~ (comma-bang) will result in an ~in-outer-module~ form. I.e.
+
+#+BEGIN_SRC fn
+`(+ ,x ,!y)
+;; expands into ['+ x (in-outer-module y)]
+#+END_SRC
+
+The main downside of this is that it introduces another potential error (in forgetting the comma or
+adding it). We will also add a new comma syntax, ~,!~ (comma-bang), which will allow unquoting
+without the ~in-outer-module~ form.
+
+
+* Modules and environments
+
+Unlike in Common Lisp, symbols in fn don't have packages. Instead, name resolution is done based
+upon the *module* in which the code/function/macro was defined.
+
+A *module* is a data structure which contains symbol-value pairs. It also has a name and a list of
+exported sybols. Modules may bind symbols to variables; such bindings may be either mutable or
+immutable. Independent of whether they are bound to variables, symbols also can be bound to macros.
+
+The difference between exported and non-exported symbols in a module is that exported symbols may be
+accessed using single-dot notation (i.e. ~module.object~) whereas non-exported symbols use double-dot
+notation (i.e. ~module..internal-object~).
+
+The *environment* with respect to an evaluation is the module and the lexical bindings used to resolve
+names in that evaluation.
 
 

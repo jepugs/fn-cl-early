@@ -220,6 +220,7 @@
                        (cadr arg-form)))
                   (t (dict-get bindings arg-form))))
           arg-list))
+
 (defun back-sub-arg-list (arg-list bindings)
   "Substitute the variables names in an arg-list with the values from bindings. This is the inverse
  operation of (BIND-ARG-LIST ARG-LIST ...)."

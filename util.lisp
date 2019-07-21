@@ -127,6 +127,16 @@
             kv)
     res))
 
+(defun make-eq-ht (&rest keys-and-values)
+  "Create a hash table that tests keys with EQ. KEYS-AND-VALUES is a PLIST used to initialize the
+contents of the table."
+  (let ((kv (group 2 keys-and-values))
+        (res (make-hash-table :test 'eq)))
+    (mapcar (lambda (x)
+              (setf (gethash (car x) res) (cadr x)))
+            kv)
+    res))
+
 
 ;; change how we print hash tables so they look like dicts in fn
 (defmethod print-object ((ht hash-table) stream)

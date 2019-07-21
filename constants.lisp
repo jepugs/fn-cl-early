@@ -1,6 +1,7 @@
 (in-package :fn-impl)
 
-;; True, False, and Null are special values which have their own type
+;; True, False, and Null are special values which have their own type. Rather than instantiating
+;; these classes with MAKE-INSTANCE, the constants defined below should be used.
 (defclass fn-true () ())
 (defclass fn-false () ())
 (defclass fn-null () ())
@@ -9,6 +10,7 @@
 (defvar fn-false (make-instance 'fn-false))
 (defvar fn-null (make-instance 'fn-null))
 
+;; Symbols used for truthiness constants in fn
 (defvar fn-true-sym '|fn|::|True|)
 (defvar fn-false-sym '|fn|::|False|)
 (defvar fn-null '|fn|::|Null|)

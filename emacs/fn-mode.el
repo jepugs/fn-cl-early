@@ -40,6 +40,21 @@
     ("progn" 1 . 2)
     ("set!" 1 cycle 2 4)))
 
+(defvar fn--operator-indent-alist
+  '(("case" 3 (cycle 1 3))
+    ("def" 3 1)
+    ("def*" 3 1)
+    ("deftype" 3 1)
+    ("defimpl" 3 (cycle 1 3))
+    ("defmacro" 3 1)
+    ("defvar" 3 1)
+    ("defvar*" 3 1)
+    ("do" 1)
+    ("if" 3 'lisp)
+    ("fn" 3 1)
+    ("let" 3 1)
+    ("set!" 3 1)))
+
 (defvar fn-fallback-indenter 2)
 
 (defvar fn-font-lock-keywords
@@ -60,7 +75,7 @@
                  (regexp-opt fn-constants t)
                  "\\_>")
          'font-lock-constant-face)
-   (list (concat "\\(:\\(?:\\sw\\|\\s_\\)+\\)")
+   (list (concat "\\('\\(?:\\sw\\|\\s_\\)+\\)")
          1 'font-lock-builtin-face)))
 
 (defvar fn-mode-syntax-table
@@ -291,16 +306,15 @@
         (context-op-col cxt))))
 
 ;; nil value indicates previous indent was a standard lisp indent/custom indenter
-(defvar fn--prev-indent-offset nil)
 (defun fn--next-indent-offset ()
   (case fn--prev-indent-offset
     ((0) nil)
     ((1) 0)
     (t 1)))
 
-(defun fn--indent-line (&optional again)
-  "Internal indentation function. kind should be 'nil or a number"
-  (if again
+(defun fn--indent-line (again)
+  "Internal indentation function."
+  (if (and inter again)
       (setq fn--prev-indent-offset (fn--next-indent-offset))
     (setq fn--prev-indent-offset nil))
   (let ((start (point)))
@@ -310,11 +324,14 @@
       (goto-char start)
       (indent-line-to (fn--compute-indent-amount cxt offset)))))
 
+(defvar fn-reindent-commands '(fn-indent-line)
+  "Commands in this list are used")
 
 (defun fn-indent-line ()
   "Indent current line as fn code"
   (interactive "*")
-  (fn--indent-line (eq last-command this-command)))
+  (fn--indent-line (eq last-command this-command)
+                   (memq this-command fn-reindent-commands)))
 
 (defun fn-mode ()
   "Major mode for editing fn programming language source code."
@@ -324,8 +341,8 @@
   (use-local-map fn-mode-map)
   (set (make-local-variable 'font-lock-defaults)
        '(fn-font-lock-keywords nil nil))
-  (set (make-local-variable 'fn--prev-indent)
-       'standard)
+  (set (make-local-variable 'fn--prev-indent-offset)
+       nil)
   ;;(set (make-local-variable 'indent-line-function) 'fn-indent-line)
   (setq-local indent-line-function 'fn-indent-line)
   (setq major-mode 'fn-mode)
