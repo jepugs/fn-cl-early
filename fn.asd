@@ -10,16 +10,5 @@
   :license "GPL v3.0"
   :description "fn Programming Language"
   :serial t
-  :components ((:file "package")
-               (:file "util")
-               (:file "dollar-sign-reader")
-               (:file "constants")
-               (:file "params")
-               (:file "type")
-               (:file "match")
-               (:file "lexical")
-               (:file "fn")
-               (:file "protocol")
-               (:file "bootlib")
-               (:file "reader")
-               (:file "bootstrap")))
+  :components ((:file "util")
+               (:file "dollar-sign-reader")))

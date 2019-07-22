@@ -1,4 +1,4 @@
-;;;; util.lisp -- utility code used throughout the implementation of fn
+;;;; util.lisp -- Utility library used throughout the implementation of fn
 
 ;;;; This file is part of fn.
 
@@ -15,7 +15,22 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(in-package :fn-impl)
+(defpackage :fn.util
+  (:documentation "Utility library used throughout the implementation of fn.")
+  (:use :cl)
+  (:export
+   ;; List/sequence functions
+   :group :take :drop :split :take-while :drop-while :split-when :flatten :interleave :length<
+   ;; hash-table functions
+   :make-ht :make-eq-ht :ht-keys :ht-has-key :ht-values :ht->plist :ht-conc :ht-append :ht-del-keys
+   ;; control-flow macros
+   :aif :rlambda :-> :->> :->as
+   ;; misc functionality
+   :symb :quoted-p :name-eq :macroexpand-all :with-gensyms :xor
+   ;; deprecated name
+   :is-quoted))
+
+(in-package :fn.util)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -86,36 +101,13 @@
  the second elements, and so on, until a list is exhausted."
   (flatten (apply #'mapcar #'list lsts)))
 
+(defun length< (lst n)
+  "Tell if the length of LST is less than N without computing the full length of LST. This is useful
+ when N is small and LST might be very long.")
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;;;; Hash table functions
-
-;; IMPLNOTE: This is defined here so it can be used as a hash table test. It's a bit dicey because
-;; the other type-related definitions are in type.lisp.
-
-(defun fn= (x0 &rest x)
-  "Equality that knows how to descend into fn objects."
-  ;; IMPLNOTE: since EQUALP works on everything _but_ general objects, we have to manually check the
-  ;; slots of instances of FN-OBJECT
-  ;; IMPLNOTE: the definition of FN-OBJECT is in type.lisp
-  (if (every (lambda (x) (typep x 'fn-object)) (cons x0 x))
-      (with-slots (type contents) x0
-        (every (lambda (x)
-                 (and (eq (slot-value x 'type) type)
-                      (equalp (slot-value x 'contents) contents)))
-               x))
-      (apply #'equalp x0 x)))
-
-(defun fnhash (x)
-  "Hash that understands fn objects"
-  (if (typep x 'fn-object)
-      (with-slots (type contents) x0
-        (sxhash (list (slot-value type 'name) contents)))
-      (sxhash x)))
-
-;; add FN= as a hashtable test
-(sb-ext:define-hash-table-test fn= fnhash)
 
 (defun make-ht (&rest keys-and-values)
   "Create a new hash table. Arguments are alternating keys and values (i.e. a PLIST). New hash
@@ -289,7 +281,11 @@ contents of the table."
             tree))
       tree))
 
-(defmacro with-gensyms ())
+(defmacro with-gensyms (vars &body body)
+  `(let ,(mapcar (lambda (var)
+                   `(,var (gensym)))
+                 vars)
+     ,@body))
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -300,142 +296,4 @@ contents of the table."
   (or (and a (not b))
       (and b (not a))))
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-;;;; Deprecated functionality
-
-;;; Delimiter Readers
-
-(define-condition unmatched-close-delimiter (error)
-  ((char :initarg :char))
-  (:documentation "Condition signaled when a closing delimiter is encountered."))
-
-(defmacro set-del-reader (open close operator)
-  "Set delimiter reader. OPEN & CLOSE must be delimiters. Operator is prepended
-to the list read in. e.g. (set-del-reader #\[ #\] list) causes [args] to be
-read as (list args)."
-  (let ((closer (intern (concatenate 'string (list close) "-reader")))
-        (opener (intern (concatenate 'string (list open) "-reader"))))
-    `(progn
-       (defun ,opener (stream char)
-         (declare (ignore char))
-         (let (res)
-           (loop
-              (handler-case (push (read stream) res)
-                (unmatched-close-delimiter (c)
-                  (if (eql (slot-value c 'char) ,close)
-                      (->> (nreverse res)
-                        (cons ,operator)
-                        (return))))))))
-       (defun ,closer (stream char)
-         (declare (ignore stream))
-         (error 'unmatched-close-delimiter :char char))
-       (set-macro-character ,open #',opener)
-       (set-macro-character ,close #',closer))))
-
-(eval-when (:load-toplevel)
-  (set-del-reader #\[ #\] 'list))
-(eval-when (:load-toplevel)
-  (set-del-reader #\{ #\} 'make-ht))
-
-
-;;; DICT functions
-
-(defun dict (&rest keys-and-values)
-  "Create a new dict. Arguments are alternating keys and values (i.e. a PLIST). New dicts default to
-using EQUALP for their test."
-  (let ((kv (group 2 keys-and-values))
-        (res (make-hash-table :test #'equalp)))
-    (mapcar (lambda (x)
-              (setf (gethash (car x) res) (cadr x)))
-            kv)
-    res))
-
-;; define dict as a synonym for hash table
-(deftype dict () 'hash-table)
-
-(defun is-dict (obj)
-  (hash-table-p obj))
-
-(defun dict-get (dict k &optional (default nil default-p))
-  "Get the value associated with the key K from DICT."
-  (multiple-value-bind (v exists) (gethash k dict)
-    (if exists
-        v
-        (if default-p
-            default
-            (error "DICT-GET: ~s doesn't contain key ~s" dict k)))))
-
-(defun (setf dict-get) (v dict k)
-  "Set the value associated with the key K from DICT."
-  (setf (gethash k dict) v))
-
-(defun dict-keys (dict)
-  "Get a list of keys in a dict."
-  (let ((res nil))
-    (maphash (lambda (k v)
-               (declare (ignore v))
-               (push k res))
-             dict)
-    (nreverse res)))
-
-(defun dict-has-key (dict key)
-  "Tell if a key is contained in a dict."
-  (maphash (lambda (k v)
-             (declare (ignore v))
-             ;; check for key equality using the test from dict
-             (if (funcall (hash-table-test dict) k key)
-                 (return-from dict-has-key t)))
-           dict)
-  nil)
-
-(defun dict-values (dict)
-  "Get a list of values in a dict."
-  (let ((res nil))
-    (maphash (lambda (k v)
-               (declare (ignore k))
-               (push v res))
-             dict)
-    (nreverse res)))
-
-(defun dict->list (dict)
-  "Get a dict as a plist."
-  (let ((res nil))
-    (maphash (lambda (k v)
-               (push (list k v) res))
-             dict)
-    (nreverse res)))
-
-(defun dict-extend (dict0 &rest dicts)
-  "Non-destructively concatenate several dicts. On key collision, use the value from the last
- provided dict containing the key."
-  (if dicts
-      (let ((res (make-hash-table :test (hash-table-test dict0))))
-        (mapcar (lambda (dict)
-                  (maphash (lambda (k v) (setf (gethash k res) v)) dict))
-                (cons dict0 dicts))
-        res)))
-
-(defun dict-conj (dict key value)
-  "Non-destructively append a single kv pair to a dict."
-  (let ((res (copy-structure dict)))
-    (setf (gethash key res) value)
-    res))
-
-;;; old name
-(defun split-if (test lst)
-  "Split LST at the first element that satisfies TEST. Returns [LEFT RIGHT]."
-  (rlambda (rleft right) (nil lst)
-    (cond ((null right)
-           (list (nreverse rleft) right))
-          ((funcall test (car right))
-           (list (nreverse rleft) right))
-          (t
-           (recur (cons (car right) rleft) (cdr right))))))
-
-(defun is-quoted (expr)
-  "Tell if EXPR is a quoted expression."
-  (and (listp expr)
-       (eq (car expr) 'quote)
-       (= (length expr) 2)))
 

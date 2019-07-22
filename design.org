@@ -146,13 +146,9 @@ arguments, called dispatch arguments.
 
 
 ;; define for all four scalar combinations
-(defimpl Mul (Int Vec2)
+(defimpl Mul (Num Vec2)
   mul vec2-scalar-mul)
-(defimpl Mul (Vec2 Int)
-  mul $(vec2-scalar-mul $1 $0))
-(defimpl Mul (Float Vec2)
-  mul vec2-scalar-mul)
-(defimpl Mul (Vec2 Float)
+(defimpl Mul (Vec2 Num)
   mul $(vec2-scalar-mul $1 $0))
 
 (* (Vec2 1.0 2.3) -2)
@@ -171,8 +167,7 @@ The following types are built into fn.
 - Symbol :: symbol
 - Bool :: boolean True or False
 - Null :: unassigned value 
-- Int :: integer (not necessarily fixed int)
-- Float :: floating point number
+- Num :: 64-bit floating-point number
 - String :: character string
 
 *Structure types*
@@ -490,3 +485,109 @@ place, or address) which is simply an unambiguous reference to some global varia
 local?). GUID syntax could start with #G (or something) and would be very much analogous to symbols
 in Common Lisp, in that GUIDs, like CL's symbols, would be standalone places to store objects. This
 also allows an elegant alternative to gensyms, i.e. randomly-generated, disposable places.
+
+** Future Features
+
+Once I've implemented everything up to version 0, I'm going to get to work on a module system as
+well as a way to sanitize macros where necessary (probably via some sort of GUID for global
+variables). That will be version 0.1. From there, the next steps will be to add multithreading and
+FFI and to otherwise flesh out the standard library, which eventually will lead me to version 0.2
+(and possibly 0.3 depending on how I break up the work). I will not increment to version 1.0 until
+the interpreter is rewritten in C++. Further goals include implementing JIT compilation using LLVM,
+adding a scientific computing/linear algebra library, and adding networking and IPC modules.
+
+
+
+** Version 0 lexer tokens
+
+(delimiters)
+left-paren, right-paren, left-bracket, right-bracket, left-brace, right-brace
+
+(unary operators)
+dollar-sign, quote, backtick, comma, comma-splice
+
+(binary operator)
+dot
+
+(literals)
+number, string, symbol
+
+comments
+
+eof
+
+* Bytecode version 0
+
+All instructions are 1 byte long. The first machine will be a register machine, because it's going
+to be a register machine eventually anyway.
+
+
+** Registers
+
+Each general-purpose register has two parts: an 8-bit tag and a 64-bit value. The tag indicates the
+type of the data. Each thread has 64 general-purpose registers, denoted by the capital letter R and
+a two-digit hexadecimal number in the range 00-3F, e.g. ~R2A~.
+
+There are also special-purpose registers (which are also per-thread):
+
+~IP~ is the instruction pointer, indicating what part of the bytecode is being interpreted. Bytecode
+is not addressed in the same space as data in this VM.
+
+
+** Load instructions
+
+These operators load a value at the top of the stack.
+
+- LD_NUM reg float64    :: floating-point number literal
+- LD_STR reg ptr64      :: constant string
+- LD_LIST reg ptr64     :: non-empty list
+- LD_EMPTY reg ptr64    :: empty list
+- LD_TRUE reg           :: True
+- LD_FALSE reg          :: False
+- LD_NULL reg           :: Null
+- LD_SYMB reg ptr64     :: symbol
+- LD_OBJ reg ptr64      :: load another type of object
+- LD_VAR reg ptr64      :: global variable reference (64-bit pointer argument)
+- LD_ADDR reg ptr64     :: an address. Could be used for either bytecode or system memory
+
+- LD_REG reg reg        :: load a register value. Args in (dest,source) order
+
+Each of the above also sets the tag bits of the associated register to a unique value based on the
+instruction in question, with LD_VAR manually reading the tag of the variable before assigning it
+and a pointer to the object to the specified register.
+
+
+*** Future load instructions
+
+Eventually, it would be cool to add tags for arbitrary-precision floats and integers.
+
+
+** Object representation
+
+Objects are always passed around as pointers. Variables and registers are tagged to keep track of
+object types. Because values are always returned in a register, tags are also preserved.
+
+In addition, the first
+
+
+** Calling and Stack manipulation
+
+This version of ~fn~ is "stackless", meaning that stack frames are allocated on the heap. The
+registers are primarily used for two things: some registers (32?) are reserved for passing
+arguments, while the rest are used to hold the results of temporary evaluations.
+
+- CLOSE reg :: create a new closure. This just 
+
+
+** Alternative: Virtual Memory and Built-in tags
+
+I don't think I'll do this because keeping full 64-bit pointers would make foreign code interop and
+low-level code writing much easier.
+
+Suppose we limit ourselves to 56-bit pointers, which is still more than enough memory. Then, we have
+8 bytes of the string which we can use as a type tag. We can use a variable-length tagging scheme to
+get 62-bit fixed-width integers and if we pick tag 00 (binary) for those, we can use CPU native
+integer arithmetic operations. It would also be possible to truncate 64-bit floating point numbers
+to 62-bit precision by dropping the two rightmost digit, allowing use of x87 hardware and making
+passing around of numbers, etc, much more efficient. A downside of this approach is that it would
+give us less than the maximum 256 possible type tags that exist right now.

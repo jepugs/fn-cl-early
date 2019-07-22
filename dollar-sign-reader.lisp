@@ -1,4 +1,4 @@
-;;;; dollar-sign-reader.lisp -- dollar sign syntax for briefly defining anonymous functions
+;;;; dollar-sign-reader.lisp -- dollar sign syntax for terse lambdas
 
 ;;;; This file is part of fn.
 
@@ -15,7 +15,11 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(in-package :fn-impl)
+(defpackage :fn.dollar-sign-reader
+  (:documentation "Dollar sign syntax for terse lambdas")
+  (:use :cl :fn.util))
+
+(in-package :fn.dollar-sign-reader)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -44,7 +48,7 @@
      (dollar-flatten (cadr tree) t))
     ;; Normally, quoted values should be ignored. However, within quasiquote, quote forms may
     ;; contain commas that we need to explore recursively
-    ((is-quoted tree)
+    ((quoted-p tree)
      (if qquote
          (dollar-flatten (cadr tree) t)
          nil))
