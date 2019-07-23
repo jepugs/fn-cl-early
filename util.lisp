@@ -20,7 +20,8 @@
   (:use :cl)
   (:export
    ;; List/sequence functions
-   :group :take :drop :split :take-while :drop-while :split-when :flatten :interleave :length<
+   :group :take :drop :split :take-while :drop-while :split-when :split-at :flatten :interleave
+   :length< :length=
    ;; hash-table functions
    :make-ht :make-eq-ht :ht-keys :ht-has-key :ht-values :ht->plist :ht-conc :ht-append :ht-del-keys
    ;; control-flow macros
@@ -87,6 +88,25 @@
           (t
            (recur (cons (car right) rleft) (cdr right))))))
 
+(defun split-at (elt lst &key (test #'eql) (repeat t))
+  "Split at a delimiter. The delimiter is removed from the resulting list. If REPEAT is T (default),
+ then the list is partitioned into one more list than the number of delimiters."
+  (if repeat
+      (let ((x (split-when $(funcall test elt $) lst)))
+        ;; check if any split occurred
+        (if (cadr x)
+            ;; FIXME: this should maybe be a tail recursive call but fuck it
+            ;; use CDADR instead of CADR to drop the delimiter
+            (cons (car x) (split-at elt (cdadr x) :test test :repeat t))
+            ;; don't include the trailing empty list
+            (list (car x))))
+      (let ((x (split-when $(funcall test elt $) lst)))
+        (if (cadr x)
+            ;; return the same thing but without the delimiter element
+            (list (car x) (cdadr x))
+            ;; include the empty second list
+            x))))
+
 (defun flatten (tree)
   "Turn TREE into a list of atoms by recursive list splicing. Returns a list even if TREE is an
  atom, e.g. (FLATTEN 'A) => (A)."
@@ -103,7 +123,13 @@
 
 (defun length< (lst n)
   "Tell if the length of LST is less than N without computing the full length of LST. This is useful
- when N is small and LST might be very long.")
+ when N is small and LST might be very long."
+  (null (drop n lst)))
+
+(defun length= (lst n)
+  "Tell if the length of LST is less than N without computing the full length of LST. This is useful
+ when N is small and LST might be very long."
+  (= (length (take n lst)) n))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 

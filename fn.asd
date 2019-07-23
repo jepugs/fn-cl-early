@@ -12,4 +12,5 @@
   :serial t
   :components ((:file "util")
                (:file "dollar-sign-reader")
-               (:file "scanner")))
+               (:file "scanner")
+               (:file "parser")))

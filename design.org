@@ -516,22 +516,157 @@ comments
 
 eof
 
-* Bytecode version 0
+
+** Version 0 grammar
+
+#+BEGIN_SRC haskell
+program -> expr* EOF
+expr    -> constant
+         | compound
+         | unary
+         | dot
+
+constant -> STRING
+          | NUMBER
+
+compound -> paren
+          | bracket
+          | brace
+paren    -> "(" expr* ")"
+bracket  -> "[" expr* "]"
+brace    -> "{" expr* "}"
+
+unary      -> quote
+            | quasiquote
+            | unquote
+            | unquote-splicing
+            | dollar
+quot       -> "'" expr
+quasiquot  -> "`" expr
+unquot     -> "," expr
+unquot-splice -> ",@" expr
+dollar     -> "$(" expr* ")"
+            | "$[" expr* "]"
+            | "${" expr* "}"
+            | "$" quasiquote
+
+dot -> SYMBOL "." SYMBOL
+     | dot "." SYMBOL
+#+END_SRC
+
+#+BEGIN_SRC common-lisp
+  (defun token-is? (tok kind)
+    (eq (token-kind tok) kind))
+
+  (make-parser
+    ((program -> (* expr) @eof)
+     (expr -> constant / compound / unary / dollar / dot)
+
+     (constant -> @string / @number)
+
+     (compound -> paren / bracket / brace)
+     (paren -> @left-paren (* expr) @right-paren)
+     (paren -> @left-bracket (* expr) @right-bracket)
+     (brace -> @left-brace (* expr) @right-brace))
+
+     (unary -> quot / quasiquot / unquot / unquot-splicing)
+     (quot -> @quot (* expr))
+     (quasiquot -> @backtick (* expr))
+     (unquot -> @comma (* expr))
+     (unquot-splice -> @comma-splice (* expr))
+  )
+  (defun fn-parse (tokens)
+    (funcall
+     (make-parser
+       ;; syntax is this: (make-parser (PATTERN-NAME PATTERN CALLBACK)* )
+
+       ;; callback is a function of one argument that is called with a list of tokens/patterns that
+       ;; match the pattern
+
+       ;; the program pattern returns a list of expressions
+       (program
+        ((* expr) 'eof)
+        #'car)
+       ;; generic expression pattern. Doesn't actually correspond to a single type
+       (expr
+        (constant / compound / unary / dot)
+        #'car)
+
+       ;; constants (strings or numbers)
+       (constant
+        ('number / 'string)
+        $(token-datum (car $)))
+
+       ;; compound forms
+       (paren
+        ('left-paren (* expr) 'right-paren)
+        $(make-ast-paren :contents (take (- (length $) 2) (cdr $))))
+       (bracket
+        ('left-bracket (* expr) 'right-bracket)
+        $(make-ast-bracket :contents (take (- (length $) 2) (cdr $))))
+       (brace
+        ('left-brace (* expr) 'right-brace)
+        $(make-ast-brace :contents (take (- (length $) 2) (cdr $))))
+
+       ;; unary operators
+       (unary 
+        ((or quote quasiquote unquote unquote-splicing dollar))
+        #'car)
+       (quote
+        ('quote expr)
+        $(make-ast-quote :expr (cadr $)))
+       (quasiquote
+        ('backtick expr)
+        $(make-ast-quasiquote :expr (cadr $)))
+       (unquote
+        ('comma expr)
+        $(make-ast-unquote :expr (cadr $)))
+       (unquote-splicing
+        ('comma-splice expr)
+        $(make-ast-unquote-splicing :expr (cadr $)))
+
+       ;; dollar sign syntax
+       (dollar 
+        (('dollar-paren (* expr) 'right-paren)
+         / ('dollar-bracket (* expr) 'right-bracket)
+         / ('dollar-brace (* expr) 'right-brace)
+         / ('dollar-backtick expr))
+        (lambda (toks)
+          (case (token-kind (car toks))
+            ((dollar-backtick) 
+             (make-ast-dollar :expr (make-ast-quasiquote :expr (cadr toks))))
+            ((dollar-paren)
+             (make-ast-dollar 
+              :expr (make-ast-paren :contents (take (- (length toks) 2) (cdr toks)))))
+            ((dollar-bracket)
+             (make-ast-dollar 
+              :expr (make-ast-bracket :contents (take (- (length toks) 2) (cdr toks)))))
+            ((dollar-brace)
+             (make-ast-dollar 
+              :expr (make-ast-brace :contents (take (- (length toks) 2) (cdr toks))))))))
+
+       ;; dot
+       (dot
+        ((dot / 'symbol) 'dot 'symbol)
+        $(make-ast-dot :left (car $) :right (cadr $))))))
+
+
+#+END_SRC
+
+
+** Bytecode version 0
 
 All instructions are 1 byte long. The first machine will be a register machine, because it's going
 to be a register machine eventually anyway.
 
 
-** Registers
+** Registers and calling conventions
 
 Each general-purpose register has two parts: an 8-bit tag and a 64-bit value. The tag indicates the
-type of the data. Each thread has 64 general-purpose registers, denoted by the capital letter R and
-a two-digit hexadecimal number in the range 00-3F, e.g. ~R2A~.
+type of the data. Each thread has 256 general-purpose registers, denoted by the notation R(xx) where
+xx is a two-digit hexadecimal number in the range 00-FF, e.g. R(5E), R(C7), and R(19).
 
-There are also special-purpose registers (which are also per-thread):
-
-~IP~ is the instruction pointer, indicating what part of the bytecode is being interpreted. Bytecode
-is not addressed in the same space as data in this VM.
+At any given time, a certain set of registers are considered active.
 
 
 ** Load instructions

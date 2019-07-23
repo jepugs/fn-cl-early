@@ -21,9 +21,12 @@
   (:export
    ;; Token kinds
    :token-kinds :left-paren :right-paren :left-bracket :right-bracket :left-brace :right-brace
-   :dollar-sign :quote :backtick :comma :number :string :symbol :eof
+   :quote :backtick :comma :comma-splice :dot :number :string :symbol :eof :dollar-paren
+   :dollar-bracket :dollar-brace :dollar-backtick
    ;; Token structure
    :token :token-kind :token-line :token-text
+   ;; Main scanner functions
+   :scan :scan-from-string
    ))
 
 (in-package :fn.scanner)
@@ -34,7 +37,8 @@
 
 (defparameter token-kinds
   '(left-paren right-paren left-bracket right-bracket left-brace right-brace
-    dollar-sign quote backtick comma comma-splice dot
+    quote backtick comma comma-splice dot
+    dollar-paren dollar-bracket dollar-brace dollar-backtick
     number string symbol
     eof))
 
@@ -53,8 +57,8 @@
         (princ-to-string kind))))
 
 (defun print-tokens (tokens)
-  "Pretty-print a series of tokens."
-  (format t "~{~a~^ ~}" (map 'list #'fmt-token tokens)))
+  "Pretty-print a series of tokens. Used for debugging."
+  (format t "~{~a~^~%~}" (map 'list #'fmt-token tokens)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -123,7 +127,7 @@
   "Characters that can be constituents in atoms."
   (and (characterp c)
        (or (alphanumericp c)
-           (member c (coerce "\\~!@#%^&*-_+=|:<>/?" 'list) :test #'eql))))
+           (member c (coerce "\\~!@#$%^&*-_+=|:<>/?" 'list) :test #'eql))))
 
 (defun whitespace? (c)
   "Whether C is a whitespace character."
@@ -141,9 +145,9 @@
 (defun scan-token (ss)
   "Get the next token from the scanner, updating the state in the process."
   (let ((c (peek ss)))
-    (case (peek ss)
+    (case c
       ;; end of file
-      ((:eof) (add-token ss 'eof))
+      ((:eof) nil)
 
       ;; single-character tokens
       ((#\() (add-char-token ss 'left-paren))
@@ -152,16 +156,24 @@
       ((#\]) (add-char-token ss 'right-bracket))
       ((#\{) (add-char-token ss 'left-brace))
       ((#\}) (add-char-token ss 'right-brace))
-      ((#\$) (add-char-token ss 'dollar-sign))
       ((#\') (add-char-token ss 'quote))
       ((#\`) (add-char-token ss 'backtick))
       ((#\.) (add-char-token ss 'dot))
 
-      ;; comma and comma-splice
+      ;; single- or double-character tokens
       ((#\,) (consume ss)
        (if (eql (peek ss) #\@)
            (add-char-token ss 'comma-splice)
            (add-token ss 'comma)))
+      ((#\$)
+       (consume ss)
+       (case (peek ss)
+         ((#\() (add-char-token ss 'dollar-paren))
+         ((#\[) (add-char-token ss 'dollar-bracket))
+         ((#\{) (add-char-token ss 'dollar-brace))
+         ((#\`) (add-char-token ss 'dollar-backtick))
+         ;; default to treating this as a symbol constituent
+         (t (scan-sym ss))))
 
       ;; comments
       ((#\;)
@@ -343,6 +355,7 @@
   (let ((ss (make-scanner-state :stream stream)))
     (loop until (at-eof? ss)
        do (scan-token ss))
+    (add-token ss 'eof)
     (scanner-state-tokens ss)))
 
 (defun scan-from-string (string)
