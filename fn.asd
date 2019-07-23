@@ -11,4 +11,5 @@
   :description "fn Programming Language"
   :serial t
   :components ((:file "util")
-               (:file "dollar-sign-reader")))
+               (:file "dollar-sign-reader")
+               (:file "scanner")))

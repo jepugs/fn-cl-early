@@ -24,7 +24,7 @@
    ;; hash-table functions
    :make-ht :make-eq-ht :ht-keys :ht-has-key :ht-values :ht->plist :ht-conc :ht-append :ht-del-keys
    ;; control-flow macros
-   :aif :rlambda :-> :->> :->as
+   :aif :it :rlambda :recur :-> :->> :->as
    ;; misc functionality
    :symb :quoted-p :name-eq :macroexpand-all :with-gensyms :xor
    ;; deprecated name
