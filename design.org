@@ -15,7 +15,6 @@ several of CLOS, namely its feeling tacked-on to the rest of the language and be
 In addition, fn code is homoiconic like Common Lisp, allowing writing of macros in the traditional
 Lisp way, which I greatly prefer to the hygienic macros and templates of e.g. Racket or Scheme.
 
-
 ** Implementation notes
 
 - Everything is implemented in Common Lisp. The only supported implementation is SBCL. No particular
@@ -559,97 +558,38 @@ dot -> SYMBOL "." SYMBOL
     (eq (token-kind tok) kind))
 
   (make-parser
-    ((program -> (* expr) @eof)
-     (expr -> constant / compound / unary / dollar / dot)
+   ;; first form is grammar
+   ((program -> (* expr) @eof)
+    (expr -> constant / group / unary / dollar / dot)
 
-     (constant -> @string / @number)
+    (constant -> @string / @number)
 
-     (compound -> paren / bracket / brace)
-     (paren -> @left-paren (* expr) @right-paren)
-     (paren -> @left-bracket (* expr) @right-bracket)
-     (brace -> @left-brace (* expr) @right-brace))
+    (group -> paren / bracket / brace)
+    (paren -> @left-paren (* expr) @right-paren)
+    (bracket -> @left-bracket (* expr) @right-bracket)
+    (brace -> @left-brace (* expr) @right-brace)
 
-     (unary -> quot / quasiquot / unquot / unquot-splicing)
-     (quot -> @quot (* expr))
-     (quasiquot -> @backtick (* expr))
-     (unquot -> @comma (* expr))
-     (unquot-splice -> @comma-splice (* expr))
-  )
-  (defun fn-parse (tokens)
-    (funcall
-     (make-parser
-       ;; syntax is this: (make-parser (PATTERN-NAME PATTERN CALLBACK)* )
+    (unary -> quot / quasiquot / unquot / unquot-splicing)
+    (quot -> @quot expr)
+    (quasiquot -> @backtick expr)
+    (unquot -> @comma expr)
+    (unquot-splice -> @comma-splice expr)
 
-       ;; callback is a function of one argument that is called with a list of tokens/patterns that
-       ;; match the pattern
+    (dollar -> @dollar-paren (* expr) @right-paren
+            / @dollar-bracket (* expr) @right-bracket
+            / @dollar-brace (* expr) @right-brace
+            / @dollar-backtick expr)
 
-       ;; the program pattern returns a list of expressions
-       (program
-        ((* expr) 'eof)
-        #'car)
-       ;; generic expression pattern. Doesn't actually correspond to a single type
-       (expr
-        (constant / compound / unary / dot)
-        #'car)
+    (dot -> var / dot @dot var)
+    (var -> @symbol))
 
-       ;; constants (strings or numbers)
-       (constant
-        ('number / 'string)
-        $(token-datum (car $)))
-
-       ;; compound forms
-       (paren
-        ('left-paren (* expr) 'right-paren)
-        $(make-ast-paren :contents (take (- (length $) 2) (cdr $))))
-       (bracket
-        ('left-bracket (* expr) 'right-bracket)
-        $(make-ast-bracket :contents (take (- (length $) 2) (cdr $))))
-       (brace
-        ('left-brace (* expr) 'right-brace)
-        $(make-ast-brace :contents (take (- (length $) 2) (cdr $))))
-
-       ;; unary operators
-       (unary 
-        ((or quote quasiquote unquote unquote-splicing dollar))
-        #'car)
-       (quote
-        ('quote expr)
-        $(make-ast-quote :expr (cadr $)))
-       (quasiquote
-        ('backtick expr)
-        $(make-ast-quasiquote :expr (cadr $)))
-       (unquote
-        ('comma expr)
-        $(make-ast-unquote :expr (cadr $)))
-       (unquote-splicing
-        ('comma-splice expr)
-        $(make-ast-unquote-splicing :expr (cadr $)))
-
-       ;; dollar sign syntax
-       (dollar 
-        (('dollar-paren (* expr) 'right-paren)
-         / ('dollar-bracket (* expr) 'right-bracket)
-         / ('dollar-brace (* expr) 'right-brace)
-         / ('dollar-backtick expr))
-        (lambda (toks)
-          (case (token-kind (car toks))
-            ((dollar-backtick) 
-             (make-ast-dollar :expr (make-ast-quasiquote :expr (cadr toks))))
-            ((dollar-paren)
-             (make-ast-dollar 
-              :expr (make-ast-paren :contents (take (- (length toks) 2) (cdr toks)))))
-            ((dollar-bracket)
-             (make-ast-dollar 
-              :expr (make-ast-bracket :contents (take (- (length toks) 2) (cdr toks)))))
-            ((dollar-brace)
-             (make-ast-dollar 
-              :expr (make-ast-brace :contents (take (- (length toks) 2) (cdr toks))))))))
-
-       ;; dot
-       (dot
-        ((dot / 'symbol) 'dot 'symbol)
-        $(make-ast-dot :left (car $) :right (cadr $))))))
-
+   ;; remaining forms are callbacks for nonterminals. Whenever a reduce is performed, the callback
+   ;; corresponding to the generated nonterminal is invoked with a single argument, a list of the
+   ;; POBJs used to make this pattern.
+   (constant #'constant-fun)
+   (dot #'dot-fun)
+   (var #'var-fun)
+   )
 
 #+END_SRC
 

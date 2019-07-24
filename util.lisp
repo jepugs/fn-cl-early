@@ -28,10 +28,54 @@
    :aif :it :rlambda :recur :-> :->> :->as
    ;; misc functionality
    :symb :quoted-p :name-eq :macroexpand-all :with-gensyms :xor
-   ;; deprecated name
-   :is-quoted))
+   ;; error handling
+   :fn-error))
 
 (in-package :fn.util)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;;;; Control Flow Macros
+
+(defmacro aif (test then else)
+  "Anaphoric IF binds the value of TEST to IT in the clauses."
+  `(let ((it ,test))
+     (if it ,then ,else)))
+
+(defmacro rlambda (llist args &body body)
+  "Creates a recursive lambda form and calls it with ARGS. The lambda form can be called recursively
+ from within the body via the name RECUR."
+  `(labels ((recur ,llist
+              ,@body))
+     (recur ,@args)))
+
+(defmacro -> (expr &body thread-forms)
+  "Threading macro. Takes one "
+  (reduce (lambda (inner outer)
+            (if (symbolp outer)
+                (list outer inner)
+                `(,(car outer) ,inner ,@(cdr outer))))
+          thread-forms
+          :initial-value expr))
+
+(defmacro ->> (expr &body thread-forms)
+  (reduce (lambda (inner outer)
+            (append outer (list inner)))
+          (mapcar (lambda (x)
+                    (if (symbolp x)
+                        (list x)
+                        x))
+                  thread-forms)
+          :initial-value expr))
+
+(defmacro ->as (expr var &body thread-forms)
+  (reduce (lambda (inner outer)
+            (substitute-if
+             outer
+             (lambda (x) (eq x var))
+             inner))
+          thread-forms
+          :initial-value expr))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -92,7 +136,9 @@
   "Split at a delimiter. The delimiter is removed from the resulting list. If REPEAT is T (default),
  then the list is partitioned into one more list than the number of delimiters."
   (if repeat
-      (let ((x (split-when $(funcall test elt $) lst)))
+      (let ((x (split-when (lambda (x)
+                             (funcall test elt x))
+                           lst)))
         ;; check if any split occurred
         (if (cadr x)
             ;; FIXME: this should maybe be a tail recursive call but fuck it
@@ -100,7 +146,9 @@
             (cons (car x) (split-at elt (cdadr x) :test test :repeat t))
             ;; don't include the trailing empty list
             (list (car x))))
-      (let ((x (split-when $(funcall test elt $) lst)))
+      (let ((x (split-when (lambda (x)
+                             (funcall test elt x))
+                           lst)))
         (if (cadr x)
             ;; return the same thing but without the delimiter element
             (list (car x) (cdadr x))
@@ -129,7 +177,10 @@
 (defun length= (lst n)
   "Tell if the length of LST is less than N without computing the full length of LST. This is useful
  when N is small and LST might be very long."
-  (= (length (take n lst)) n))
+  (rlambda (n lst) (n lst)
+      (cond ((zerop n) (null lst))
+            ((null lst) nil)
+            (t (recur (- n 1) (cdr lst))))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -217,7 +268,7 @@ contents of the table."
     (setf (gethash key res) value)
     res))
 
-(defun ht-del-keys (ht keys &key (test #'fn=))
+(defun ht-del-keys (ht keys &key (test #'eql))
   "Non-destructively delete all the keys in the list KEYS from HT. TEST is a test function used to
   determine whether a key is a member of KEYS."
   (declare (cl:type hash-table ht)
@@ -229,52 +280,6 @@ contents of the table."
                  (setf (gethash k res) v)))
              ht)
     res))
-
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-;;;; Control Flow Macros
-
-(defmacro aif (test then else)
-  "Anaphoric IF binds the value of TEST to IT in the clauses."
-  `(let ((it ,test))
-     (if it ,then ,else)))
-
-(defmacro rlambda (llist args &body body)
-  "Creates a recursive lambda form and calls it with ARGS. The lambda form can be called recursively
- from within the body via the name RECUR."
-  `(labels ((recur ,llist
-              ,@body))
-     (recur ,@args)))
-
-(defmacro -> (expr &body thread-forms)
-  "Threading macro. Takes one "
-  (reduce (lambda (inner outer)
-            (if (symbolp outer)
-                (list outer inner)
-                `(,(car outer) ,inner ,@(cdr outer))))
-          thread-forms
-          :initial-value expr))
-
-(defmacro ->> (expr &body thread-forms)
-  (reduce (lambda (inner outer)
-            (append outer (list inner)))
-          (mapcar (lambda (x)
-                    (if (symbolp x)
-                        (list x)
-                        x))
-                  thread-forms)
-          :initial-value expr))
-
-(defmacro ->as (expr var &body thread-forms)
-  (reduce (lambda (inner outer)
-            (substitute-if
-             outer
-             (lambda (x) (eq x var))
-             inner))
-          thread-forms
-          :initial-value expr))
-
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -323,3 +328,33 @@ contents of the table."
       (and b (not a))))
 
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;;;; Error generation
+
+(define-condition fn-error (error)
+  ((source :initarg :source
+           :type string
+           :documentation "The part of the interpreter in which the error occurred.")
+   (place :initarg :place
+          :documentation "Line number where the error occurred.")
+   (message :initarg :message
+            :type string
+            :documentation "Message to print")))
+
+(defmethod print-object ((object fn-error) stream)
+  (let ((*standard-output* stream))
+    (with-slots (source place message) object
+      (princ source)
+      (princ
+       (if place
+           (format nil " error at line ~a:" place)
+           " error:"))
+      (terpri)
+      (princ "    ")
+      (princ message)
+      (terpri)
+      (finish-output))))
+
+(defun fn-error (source message &optional place)
+  (error 'fn-error :source source :place place :message message))

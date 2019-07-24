@@ -24,7 +24,7 @@
    :quote :backtick :comma :comma-splice :dot :number :string :symbol :eof :dollar-paren
    :dollar-bracket :dollar-brace :dollar-backtick
    ;; Token structure
-   :token :token-kind :token-line :token-text
+   :token :token-kind :token-line :token-datum :token-text
    ;; Main scanner functions
    :scan :scan-from-string
    ))
@@ -212,7 +212,9 @@
       ((#\0) #\nul)
 
       ;; for now, we'll forget about the fancy octal and hexadecimal escape codes
-      (t (error "Unimplemented string escape code: \"\\~s\"" c)))))
+      (t (fn-error "FN.SCANNER"
+                   (format nil "unrecognized string escape code: \"\\~s\"" c)
+                   (scanner-state-line ss))))))
 
 (defun scan-string-literal (ss)
   "Scan a string literal."
@@ -222,7 +224,9 @@
     (let ((c (peek ss)))
       (cond
         ;; emit an error if the stream ends before the string is finished
-        ((at-eof? ss) (error "Encountered EOF while parsing string."))
+        ((at-eof? ss) (fn-error "FN.SCANNER"
+                                "reached EOF while scanning string"
+                                (scanner-state-line ss)))
 
         ;; when we're escaped, we dispatch to the scan-escape-code helper
         (escaped?
@@ -281,7 +285,9 @@
              (cond
                ((eql c #\.)
                 (if point?
-                    (error "Gibberish mixture of dots and numbers")
+                    (fn-error "FN.SCANNER"
+                              "Ambiguous combination of dots and numbers"
+                              (scanner-state-line ss))
                     (progn (consume ss)
                            (recur int-acc frac-acc t))))
 
@@ -294,7 +300,9 @@
                ;; throw everything out; we're reading a symbol
                ((symbol-char? c)
                 (if point?
-                    (error "Gibberish mixture of dots and numbers")
+                    (fn-error "FN.SCANNER"
+                              "Ambiguous combination of dots and numbers"
+                              (scanner-state-line ss))
                     nil))
 
                ;; done reading I guess. Return integer and fractional parts as lists of characters
@@ -328,7 +336,7 @@
       (cond
         (escaped?
          (consume ss)
-         (recur t))
+         (recur nil))
         ((eql c #\\)
          (consume ss)
          (recur t))
@@ -341,7 +349,9 @@
           (rlambda (acc escaped? i) (nil nil 0)
             (if (>= i (length ct))
                 (if escaped?
-                    (error "Symbol name cannot end with \\")
+                    (fn-error "FN.SCANNER"
+                              "symbol name cannot end with \\"
+                              (scanner-state-line ss))
                     (coerce (nreverse acc) 'string))
                 (let ((c (aref ct i)))
                   (cond

@@ -13,4 +13,7 @@
   :components ((:file "util")
                (:file "dollar-sign-reader")
                (:file "scanner")
-               (:file "parser")))
+               (:file "ast")
+               (:file "parser-gen")
+               (:file "parser")
+               (:file "main")))
