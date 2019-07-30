@@ -10,6 +10,7 @@
   :license "GPL v3.0"
   :description "fn Programming Language"
   :serial t
+  :pathname "src"
   :components ((:file "util")
                (:file "dollar-sign-reader")
                (:file "scanner")
