@@ -196,7 +196,7 @@ The slots of an object can be accessed directly using ~(slot-value OBJ SLOT)~. M
 set using ~(set (slot-value ...) ...)~.
 
 
-* Version 0 Spec
+* Version 0 Language Spec
 
 If anyone other than me ever tries to read this, I'm sorry. This is a "complete" specification of
 version 0 of the fn programming language (i.e. complete enough for me, the language designer, to
@@ -485,6 +485,7 @@ local?). GUID syntax could start with #G (or something) and would be very much a
 in Common Lisp, in that GUIDs, like CL's symbols, would be standalone places to store objects. This
 also allows an elegant alternative to gensyms, i.e. randomly-generated, disposable places.
 
+
 ** Future Features
 
 Once I've implemented everything up to version 0, I'm going to get to work on a module system as
@@ -497,13 +498,215 @@ adding a scientific computing/linear algebra library, and adding networking and 
 
 
 
+** VM version 0
+
+The initial implementation (not the full version 0) will omit macros, varargs, and any sort of
+clever optimization.
+
+
+*** Call stack
+
+Each stack frame will provide the program with (up to) 256 clean registers. To create closures, we
+borrow the concept of upvalues from Lua. The CALL opcode takes three arguments: the return value
+register, the register containing the first argument, and the number of arguments being passed.
+
+Eventually we will apply the Lua calling optimization where the argument list is at the end of the
+stack and so can be reused in the next function call. For now however, calling does this:
+
+- check the tag to make sure that the value is a function
+- create a new stack frame
+- copy all active registers to the stack frame
+- copy the return address to the stack frame
+- copy the arguments to the fresh registers
+- jump to the function bytecode
+
+While returning does this:
+
+- copy upvalues to their location on the heap
+- restore previous register values from the stack frame
+- jump to the return address (the caller address plus 1)
+
+
+*** Values
+
+Values have a 4-byte tag describing their types and an 8-byte value, as in Lua. In the future we may
+move to a single 8-byte value with the tag built in to the first few bits. This would result in some
+weirdness, for instance having floats and fixnums that are 60-62 bits instead of a full 64.
+Moreover, it would require the implementation of some sort of virtual memory scheme so that object
+pointers could fit into 48 bits (leaving 16 bits for the tag), which precludes the passing of native
+pointers as immediate values. The biggest performance gain here would be the fact that a single
+register could be used for each machine register, and also that all reads and writes could happen on
+64-bit boundaries. It would also greatly reduce data usage. The downsides are greatly increased
+implementation complexity, loss of floating-point precision, and the need to treat native code as a
+special object. However, realistically, being able to pass around native pointers in single
+registers is not especially useful.
+
+Alternatively, 
+
+In VM 0, the VM is only aware of the following types of values:
+
+- numbers
+- strings
+- symbols
+- objects
+- special constants like True, False, and Null
+- raw bytes
+
+
+*** Symbols and variables
+
+Obviously symbols are going to be internalized. This can be done using the VM's INTERN op. Every
+time a new string is internalized, it is added to a hash table and a unique 16-bit identifier is
+assigned to it. Then, a copy of the string is added to an array indexed by symbol IDs so that the
+name can be recovered easily.
+
+
+*** Creating Objects using only Bytecode
+
+There are several special load instructions available to the VM that can be used to load 
+
+Most objects in FN consist of a reference to a Type object and a hashtable. There are instructions
+to add keys, to set values, and to check whether a key exists in the table.
+
+There is a special VM op called LDBYTES which loads bytes directly into the data part of a register.
+This can be used, among other things, to create strings.
+
+There is also LDNUM to load numeric constants.
+
+
+*** Compilation
+
+The unit of compilation is the file. We will compile in two passes. The first pass makes a list of
+all top-level definitions and creates bytecode to
+
+
+** VM Tags
+
+We have these types
+
+Atomic types*
+- Symbol :: symbol
+- Bool :: boolean True or False
+- Null :: unassigned value 
+- Num :: 64-bit floating-point number
+- String :: character string
+
+*Structure types*
+- List :: singley-linked list
+- Dict :: general-purpose hash table
+- Arr :: generic one-dimensional (for now) array
+- Type :: the type of types
+
+So, what if we implemented variable-width tags as such:
+
+- 2-bit tags for numbers (and eventually fixnums)
+- 16-bit tags for everything else
+- reserve tags for Bytes (up to 6 bytes), Function, True, False, Nil, Num, String, Array, Dict,
+  Empty, and Cons (eventually big-int)
+
+
+*** Tagging details
+
+First three bits:
+- 000 :: number
+- 001 :: cons
+- 010 :: string
+- 011 :: object (i.e. hash table)
+- 100 :: function
+- 101, 110 :: reserved for future extensions
+- 111 :: extended tag
+
+First 8 bits:
+- Null  :: e0
+- True  :: e1
+- False :: e2
+- Sym   :: f0
+- Bytes :: f1
+
+*Note:* If we assume that all pointers have addresses that are multiples of 4, we can actually get
+away with using the first two bits for a tag. In fact, if we assume 8-bit alignment, we can use a
+full 3 bits for the tag. (61-bit pointers). Not counting an extended tag and the numeric immediate
+type(s), that gives us up to 6 different pointer types that can be encoded directly into the tag
+while still leaving room for all special values, symbols, and functions.
+
+*** Objects:
+
+8 bytes of metadata
+8 byte type pointer?
+
+
+**** Note: future tagging extensions
+
+If we ever find ourselves needing more 3-bit tags, we have some options:
+
+- combining two or more pointer values into a single tag and adding data on the business end of the
+  pointer to differentiate them
+  - e.g. making objects and arrays the same and adding a 64-bit tag to them
+- further shortening numbers by combining the number tag w/ the extended tag
+- changing object representation could make it so that objects, arrays, and strings can all be
+  stored under the same tag. Type information must simply be encoded in the first 8 bytes of data,
+  and this could include things like number of elements, mutability, and so on. Since Types will
+  also be regular objects, we could directly embed the 61-bit type pointer and still have 3 bits to
+  work with for type information.
+
+
+** VM 0 object representation
+
+Objects in fn are usually expected to have simple types which rarely have more than 10 fields and
+often have 1 or 2.
+
+
+** VM version 0
+
+- heavily inspired by Lua 5 VM
+# - 256 registers forming a cyclic stack
+#   - each register has a one-byte tag describing it
+#   - internally an array of 256 * 9 = 2304 bytes
+- must figure out ahead of time where each variable, intermediate value, etc can go on the stack
+  - at the end of the stack frame is the call stack, which can be used as the beginning of the next
+    stack frame if you're clever
+  - this can be computed by counting the number of function arguments that need to be passed
+- 32-bit opcodes. First byte is operation, other three are registers and/or constants/variables
+- 72-bit values. 8-bit tag describing type follow by 64-bits of data. These 64-bits are usually an
+  object pointer. The first two bytes of an object are the GUID of the variable for its type, and
+  the rest of the object is tightly-packed 9-byte fields
+- 12-byte variables and values. The first two bytes are a tag describing the type and nature of the
+  variable. The next two are the GUID of the type of this variable (where applicable). Finally,
+  there's a 64-bit piece of data corresponding to the
+
+What if we put the tag inside the data?
+
+- one 2-bit tag for numbers (just shift left to convert to normal floating point instructions)
+- other types have 32(?)-bit tag including 30-bit GUID and 32-bit OID.
+- probably not
+
+*** Op codes
+
+# should this have multiple versions?
+ldconst(Reg A, 16-bit CID)
+ldvar(Reg A, 16-bit GUID)
+ldaddr(Reg A, 16-bit OID)
+
+
+
+# Writes a register or range of registers to a location in memory
+write(Reg A (dest), Reg B (src), Reg C (length))
+read(Reg A (dest))
+
+call(Reg A (return val), Reg B (call frame), Reg C (frame size))
+
+closure(Reg A, Reg B (num-args), Reg C (and-arg))
+
+
 ** Version 0 lexer tokens
 
 (delimiters)
 left-paren, right-paren, left-bracket, right-bracket, left-brace, right-brace
 
 (unary operators)
-dollar-sign, quote, backtick, comma, comma-splice
+quote, backtick, comma, comma-splice
+
+dollar-paren, dollar-bracket, dollar-brace
 
 (binary operator)
 dot
@@ -594,64 +797,9 @@ dot -> SYMBOL "." SYMBOL
 #+END_SRC
 
 
-** Bytecode version 0
-
-All instructions are 1 byte long. The first machine will be a register machine, because it's going
-to be a register machine eventually anyway.
-
-
 ** Registers and calling conventions
 
-Each general-purpose register has two parts: an 8-bit tag and a 64-bit value. The tag indicates the
-type of the data. Each thread has 256 general-purpose registers, denoted by the notation R(xx) where
-xx is a two-digit hexadecimal number in the range 00-FF, e.g. R(5E), R(C7), and R(19).
-
-At any given time, a certain set of registers are considered active.
-
-
-** Load instructions
-
-These operators load a value at the top of the stack.
-
-- LD_NUM reg float64    :: floating-point number literal
-- LD_STR reg ptr64      :: constant string
-- LD_LIST reg ptr64     :: non-empty list
-- LD_EMPTY reg ptr64    :: empty list
-- LD_TRUE reg           :: True
-- LD_FALSE reg          :: False
-- LD_NULL reg           :: Null
-- LD_SYMB reg ptr64     :: symbol
-- LD_OBJ reg ptr64      :: load another type of object
-- LD_VAR reg ptr64      :: global variable reference (64-bit pointer argument)
-- LD_ADDR reg ptr64     :: an address. Could be used for either bytecode or system memory
-
-- LD_REG reg reg        :: load a register value. Args in (dest,source) order
-
-Each of the above also sets the tag bits of the associated register to a unique value based on the
-instruction in question, with LD_VAR manually reading the tag of the variable before assigning it
-and a pointer to the object to the specified register.
-
-
-*** Future load instructions
-
-Eventually, it would be cool to add tags for arbitrary-precision floats and integers.
-
-
-** Object representation
-
-Objects are always passed around as pointers. Variables and registers are tagged to keep track of
-object types. Because values are always returned in a register, tags are also preserved.
-
-In addition, the first
-
-
-** Calling and Stack manipulation
-
-This version of ~fn~ is "stackless", meaning that stack frames are allocated on the heap. The
-registers are primarily used for two things: some registers (32?) are reserved for passing
-arguments, while the rest are used to hold the results of temporary evaluations.
-
-- CLOSE reg :: create a new closure. This just 
+Every call frame provides up to 256 fresh registers.
 
 
 ** Alternative: Virtual Memory and Built-in tags
@@ -666,3 +814,20 @@ integer arithmetic operations. It would also be possible to truncate 64-bit floa
 to 62-bit precision by dropping the two rightmost digit, allowing use of x87 hardware and making
 passing around of numbers, etc, much more efficient. A downside of this approach is that it would
 give us less than the maximum 256 possible type tags that exist right now.
+
+
+** Stdlib note: globbing
+
+Globbing file names would be an extremely useful feature for interactive programming and
+system-script writing.
+
+#+BEGIN_SRC fn
+(def glob-files (pattern)
+  "Returns a list of file and/or directory names matching a bash-style glob string."
+  (options (type (String -> List)))
+  ...)
+#+END_SRC 
+
+
+
+
