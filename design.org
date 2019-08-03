@@ -5,7 +5,6 @@ system, an intuitive module-based approach to code organization, powerful metapr
 facilities, and a variety of quality of life features that aid in writing especially concise code
 without sacrificing clarity.
 
-
 ** fn compared to other dialects of Lisp
 
 Compared to most dialects of Lisp, fn has a small number of special forms, several new syntactic
@@ -14,6 +13,7 @@ several of CLOS, namely its feeling tacked-on to the rest of the language and be
 
 In addition, fn code is homoiconic like Common Lisp, allowing writing of macros in the traditional
 Lisp way, which I greatly prefer to the hygienic macros and templates of e.g. Racket or Scheme.
+
 
 ** Implementation notes
 
@@ -58,7 +58,7 @@ some modern features.
   the list of trailing arguments.
 
   #+BEGIN_SRC fn
-  (defn func (positional-arg (optional-arg "init") ('keyword-arg "key-init"))
+  (def (func positional-arg (optional-arg "init") ('keyword-arg "key-init"))
     (function-body))
   #+END_SRC
 
@@ -67,20 +67,20 @@ some modern features.
   #+BEGIN_SRC fn
   (defun operator (operand0 &rest operands) ...)
   ;; => (in FN)
-  (defn operator (operand0 & operands) ...)
+  (def (operator operand0 & operands) ...)
 
   (defun log (x &optional (base 10)) ...)
   ;; => lists replace &optional
-  (defn log (x (base 10)) ...)
+  (def (log x (base 10)) ...)
 
   (defun sort (seq &key (test #'< test-p) (ascending t)) ...)
   ;; => keyword arguments replace &key
-  (defn sort (seq ('test #'<) ('ascending t)) ...)
+  (def (sort seq ('test <) ('ascending t)) ...)
   #+END_SRC
 
   #+BEGIN_SRC fn
   ;; define a function requiring a keyword argument
-  (defn func ('req-key ('opt-key "default")) 
+  (def (func 'req-key ('opt-key "default")) 
     (function-body))
 
   (func) ;=> error (needs req-key)
@@ -90,33 +90,45 @@ some modern features.
   #+END_SRC
 
 
-* Type System 
+* Type System
 
-** Object system
+** Type definition
 
 New types can be defined using the ~deftype~ special form. Types are first-class objects and invoking
 ~deftype~ causes creation of a global type object of the specified name. However, there is no way to
 create new type objects other than by using ~deftype~, i.e. there are no non-global types.
 
-The *internal slots* of an object are the key-value pairs it contains. They can be accessed with
-~slot-value~. The *constructor* of a type is a function that creates new instances of a type. It is
-usually generated automatically by ~deftype~, however it may be manually specified via the options.
+The *fields* of an object are the key-value pairs it contains. They can be accessed with ~field-value~
+or ~@~. Objects may be instantiated by calling the type as
+
+By convention, type and protocol names begin with capital letters.
 
 #+BEGIN_SRC fn
 ;; Type and protocol creation
-(deftype Type-Name (slots...) options...)
-;; Instantiate an arbitrary object by manually assigning slot values
-(instantiate TYPE SLOT-VALUES...)
-;; to invoke the constructor, use the object as a Callable instance
-(TYPE ARGS...)
+(deftype (Type-Name args...) options...)
+;; at this time no options are supported
 
-;; Access slots directly
-(slot-value OBJ SLOT)
-(set (slot-value OBJ SLOT) NEW-VALUE)
+;; to invoke the constructor, use the type as a function
+(Type-Name args...)
 
-;; Access slots via the generic accessors
-(@ OBJ SLOT)
+;; Access fields directly
+(field-value obj 'field)
+(set (field-value obj 'field) new-value)
+
+;; Access fields via the generic accessors
+(@ obj 'field)
+(set (@ obj 'field) new-value)
+;; or, equivalently,
+obj.field
+(set obj.field new-value)
+;; this dot notation is preferred wherever possible
+
 #+END_SRC
+
+*** Future features
+
+Options should allow customization of the object's internal representation, constructor, and fields.
+E.g. fields may be marked mutable or have type restrictions applied.
 
 
 ** Protocols and Implementation
@@ -125,29 +137,29 @@ A protocol is a group of functions whose behaviors are decided based upon the ty
 arguments, called dispatch arguments.
 
 #+BEGIN_SRC fn
-(defproto Proto-Name (types...)
-  (function-name-1 arg-list options...)
-  (function-name-2 arg-list options...))
-(defimpl Proto-Name (types...)
-  function-name-1 implementation-function-1
-  function-name-2 implementation-function-2)
+(defproto (Proto-Name types...)
+  (method-1 args)
+  (method-2 args))
+(defimpl (Proto-Name types...)
+  method-1 implementation-function-1
+  method-2 implementation-function-2)
 
 ;; Example: the built-in Mul protocol
-(defproto Mul (l r)
-  (mul (l r) "Multiply two numbers"))
+(defproto (Mul L R)
+  (mul (L R) "Multiply two numbers"))
 
 ;; Example: Implementing multiplication on a custom 2D vector type
-(deftype Vec2 (x y))
+(deftype (Vec2 x y))
 
-(defn vec2-scalar-mul (s v)
+(def (vec2-scalar-mul s v)
   "Multiply a vec2 by a scalar"
   (Vec2 (* s v.x) (* s v.y)))
 
 
 ;; define for all four scalar combinations
-(defimpl Mul (Num Vec2)
+(defimpl (Mul Num Vec2)
   mul vec2-scalar-mul)
-(defimpl Mul (Vec2 Num)
+(defimpl (Mul Vec2 Num)
   mul $(vec2-scalar-mul $1 $0))
 
 (* (Vec2 1.0 2.3) -2)
@@ -158,22 +170,31 @@ arguments, called dispatch arguments.
 #+END_SRC
 
 
+*** Future features
+
+Protocols should be able to have methods that don't create global function objects. Such methods
+could only be accessed through the protocol object. This would be helpful, e.g. for the ~Mul~
+interface because the ~mul~ function is redundant compared to the ~*~ operator.
+
+I would like to add functionality where 
+
+
 ** Built-in types
 
 The following types are built into fn.
 
 *Atomic types*
 - Symbol :: symbol
-- Bool :: boolean True or False
-- Null :: unassigned value 
+- Bool :: boolean denoted ~true~ or ~false~
+- Null :: unassigned value denoted ~null~
 - Num :: 64-bit floating-point number
-- String :: character string
 
 *Structure types*
 - List :: singley-linked list
-- Dict :: general-purpose hash table
-- Arr :: generic one-dimensional (for now) array
+- Table :: general-purpose hash table
+- Array :: generic one-dimensional vector
 - Type :: the type of types
+- String :: character string
 
 Foreign data structures and bit array types will be added in the future.
 
@@ -190,7 +211,7 @@ Foreign data structures and bit array types will be added in the future.
 
 ** Misc Type Functions
 
-Use ~(type-of OBJ)~ to get the type of an object.
+Use ~(type-of obj)~ to get the type of an object.
 
 The slots of an object can be accessed directly using ~(slot-value OBJ SLOT)~. Mutable slots can be
 set using ~(set (slot-value ...) ...)~.
@@ -201,6 +222,68 @@ set using ~(set (slot-value ...) ...)~.
 If anyone other than me ever tries to read this, I'm sorry. This is a "complete" specification of
 version 0 of the fn programming language (i.e. complete enough for me, the language designer, to
 remember the decisions I've made so far).
+
+** Core language cheat sheet
+
+This sample code contains every special form in fn.
+
+#+BEGIN_SRC fn
+;; variable definition
+(def var value)
+(def (fun-var arg*) body*)
+(defvar var value)
+
+;; type system
+(deftype (Type arg*))
+(defproto (Proto-Name type-var*)
+  (function-name arg*)
+  (function-name arg*))
+(defimpl (Proto-Name types)
+  function-name function
+  function-name function)
+
+;; get/set
+(get obj field)
+(@ obj key)
+(set place value)
+
+;; function creation
+(fn (x) (+ x 2))
+$(+ $ 2)
+(dollar-fn (+ $ 2))
+
+;; control flow
+(apply fun lst)
+(do expr*)
+(let (var1 val1
+      var2 val2
+      (fun-var arg*)
+        (body))
+  expr*)
+(if condition
+    then-expr
+    else-expr)
+(cond
+  condition1 
+    expr1
+  condition2 
+    expr2)
+(case obj
+  pattern1
+    expr1
+  pattern2
+    expr2)
+
+;; code as data/macros
+(defmacro (name arg*)
+  macro-body)
+'x
+(quote x)
+`(a b ,(+ 2 4))
+(quasiquote (a b (unquote (+ 2 4))))
+
+#+END_SRC
+
 
 ** Flow control
 
@@ -229,7 +312,7 @@ alternating series of tests and results, and automatically groups them into pair
       (= (mod x 15) 0) "fizzbuzz"
       (= (mod x 5) 0) "buzz"
       (= (mod x 3) 0) "fizz")
-      (True (String x)))
+      (true (String x)))
 #+END_SRC
 
 
@@ -286,7 +369,7 @@ previous key. E.g. ~(@ obj key1 key2)~ is equivalent to ~(@ (@ obj key1) key2)~.
 The default behavior for ~@~ on new types is to act like ~slot-value~.
 
 
-*** dot notation (might remove)
+*** dot notation
 
 The dot (.) is used as a shorthand for ~@~ when the object is a variable and the key is a symbol. For
 example, the following two expressions are equivalent:
@@ -407,6 +490,8 @@ Will not be implemented with the first version
 
 ** Complete list of special operators
 
+- apply
+- case
 - cond
 - def
 - defimpl
@@ -484,6 +569,7 @@ place, or address) which is simply an unambiguous reference to some global varia
 local?). GUID syntax could start with #G (or something) and would be very much analogous to symbols
 in Common Lisp, in that GUIDs, like CL's symbols, would be standalone places to store objects. This
 also allows an elegant alternative to gensyms, i.e. randomly-generated, disposable places.
+
 
 ** Future Features
 
@@ -617,9 +703,9 @@ These operators load a value at the top of the stack.
 - LD_STR reg ptr64      :: constant string
 - LD_LIST reg ptr64     :: non-empty list
 - LD_EMPTY reg ptr64    :: empty list
-- LD_TRUE reg           :: True
-- LD_FALSE reg          :: False
-- LD_NULL reg           :: Null
+- LD_TRUE reg           :: true
+- LD_FALSE reg          :: false
+- LD_NULL reg           :: null
 - LD_SYMB reg ptr64     :: symbol
 - LD_OBJ reg ptr64      :: load another type of object
 - LD_VAR reg ptr64      :: global variable reference (64-bit pointer argument)
@@ -666,3 +752,29 @@ integer arithmetic operations. It would also be possible to truncate 64-bit floa
 to 62-bit precision by dropping the two rightmost digit, allowing use of x87 hardware and making
 passing around of numbers, etc, much more efficient. A downside of this approach is that it would
 give us less than the maximum 256 possible type tags that exist right now.
+
+** Alt. Defn syntax
+
+#+BEGIN_SRC fn
+(defn x "Optional doc-string"
+  (arg-pattern-1)
+    fn-body-1
+  (arg-pattern-2)
+    fn-body-2
+  ...)
+
+i.e.
+
+(defn factorial
+  (0) 1
+  (n) (* n (factorial (- n 1))))
+
+(defn map
+  ([]) )
+
+;; alternative: allow multiple defn's per file
+(defn factorial (0) 1)
+(defn factorial (n) (* n (factorial (- n 1)))
+
+
+#+END_SRC
