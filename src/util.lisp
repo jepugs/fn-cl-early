@@ -190,7 +190,7 @@
   "Create a new hash table. Arguments are alternating keys and values (i.e. a PLIST). New hash
  tables default to using FN= for their test (so they can have FN-OBJECTs as keys)."
   (let ((kv (group 2 keys-and-values))
-        (res (make-hash-table :test 'fn=)))
+        (res (make-hash-table :test 'equalp)))
     (mapcar (lambda (x)
               (setf (gethash (car x) res) (cadr x)))
             kv)

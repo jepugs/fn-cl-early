@@ -1,4 +1,4 @@
-(defpackage #:fn-asd
+(defpackage :fn-asd
   (:use :cl :asdf))
 
 (in-package :fn-asd)
@@ -17,4 +17,5 @@
                (:file "ast")
                (:file "parser-gen")
                (:file "parser")
+               (:file "values")
                (:file "main")))
