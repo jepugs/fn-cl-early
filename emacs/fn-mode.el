@@ -11,51 +11,26 @@
 (add-to-list 'auto-mode-alist '("\\.fn\\'" . fn-mode))
 
 (defvar fn-definers
-  '("def" "def*" "defimpl" "defmacro" "defn" "defproto" "deftype" "defvar")
-  "Definer forms have syntax highlighting on the operator and the
- first argument. Their bodies are indented two spaces past the
- previous one.")
+  '("def" "defmacro" "defvar"))
 (defvar fn-special-operators
-  '("@" "and" "case" "cond" "do" "if" "fn" "let" "new" "or" "progn" "set!")
+  '("@" "apply" "defimpl" "defproto" "deftype" "case" "cond" "do" "if" "fn" "let" "get" "set")
   "Special operators that have their names highlighted")
 (defvar fn-constants
-  '("$" "$0" "$1" "$2" "$3" "$4" "$5" "&" "True" "False" "Null" "_"))
+  '("$" "$0" "$1" "$2" "$3" "$4" "$5" "&" "true" "false" "null" "_"))
 
-;; indentation specifiers for certain operators
+;; indentation rules for special operators
 (defvar fn-operator-indent-alist
-  '(("case" 1 4 cycle 2 4)
-    ("cond" 1 cycle 2 4)
-    ("def" 1 cycle 2 4)
-    ("def*" 1 cycle 2 4)
-    ("deftype" 1 4 4 cycle 2 4)
-    ("defimpl" 1 4 4 cycle 2 4)
-    ("defmacro" 1 4 . 2)
-    ("defn" 1 4 4 . 2)
-    ("defproto" 1 4 4 cycle 2 4)
-    ("defvar" 1 cycle 2 4)
-    ("do" 1 . 2)
-    ("if" 1 4 2 . 2)
-    ("fn" 1 4 . 2)
-    ("let" 1 4 . 2)
-    ("progn" 1 . 2)
-    ("set!" 1 cycle 2 4)))
-
-(defvar fn--operator-indent-alist
-  '(("case" 3 (cycle 1 3))
-    ("def" 3 1)
-    ("def*" 3 1)
-    ("deftype" 3 1)
-    ("defimpl" 3 (cycle 1 3))
-    ("defmacro" 3 1)
-    ("defvar" 3 1)
-    ("defvar*" 3 1)
-    ("do" 1)
-    ("if" 3 'lisp)
-    ("fn" 3 1)
-    ("let" 3 1)
-    ("set!" 3 1)))
-
-(defvar fn-fallback-indenter 2)
+  '(("case" 4 cycle 2 4)
+    ("cond" cycle 2 4)
+    ("def" 4 . 2)
+    ("deftype" 4 . 2)
+    ("defimpl" 4 cycle 2 4)
+    ("defmacro" 4 . 2)
+    ("defproto" 4 . 2)
+    ("defvar" 4 . 2)
+    ("do" . 2)
+    ("fn" 4 . 2)
+    ("let" 4 . 2)))
 
 (defvar fn-font-lock-keywords
   (list
@@ -63,20 +38,42 @@
    (list (concat
           "("
           (regexp-opt fn-definers t)
-          "\\_>\\(?:\\(?:\\s-\\|\n\\)+\\)?\\(\\_<\\(?:\\s_\\|\\sw\\)+\\_>\\)?")
-         '(1 font-lock-keyword-face)
+          "\\_>")
+         '(1 font-lock-keyword-face))
+   ;; definition names
+   (list (concat
+          "("
+          (regexp-opt fn-definers t)
+          ;; whitespace
+          "\\_>[[:space:]]+"
+          ;; symbol
+          "\\_<\\(\\(?:\\s_\\|\\w\\)+\\)\\_>")
          '(2 font-lock-variable-name-face))
+   ;; function definitions
+   (list (concat
+          "("
+          (regexp-opt fn-definers t)
+          ;; whitespace and opening paren
+          "\\_>[[:space:]]+("
+          ;; symbol
+          "\\_<\\(\\(?:\\s_\\|\\w\\)+\\)\\_>")
+         '(2 font-lock-function-name-face))   
    ;; other special operators
    (list (concat "("
                  (regexp-opt fn-special-operators t)
                  "\\_>")
          1 'font-lock-keyword-face)
+   ;; special constants (True, False, etc)
    (cons (concat "\\_<"
                  (regexp-opt fn-constants t)
                  "\\_>")
          'font-lock-constant-face)
-   (list (concat "\\('\\(?:\\sw\\|\\s_\\)+\\)")
-         1 'font-lock-builtin-face)))
+   ;; quoted symbols
+   (list "\\('\\(?:\\sw\\|\\s_\\)+\\_>\\)"
+         1 'font-lock-constant-face)
+   ;; Symbols starting with uppercase characters (presumed types/constructors)
+   (list "\\_<\\([[:upper:]]\\(?:\\sw\\|\\s_\\)*\\)\\_>"
+         1 'font-lock-type-face)))
 
 (defvar fn-mode-syntax-table
   (let ((stab (make-syntax-table)))
@@ -99,6 +96,7 @@
     (modify-syntax-entry ?! "w" stab)
     (modify-syntax-entry ?* "w" stab)
     (modify-syntax-entry ?. "_" stab)
+    (modify-syntax-entry ?\# "w" stab)
     ;; delimiters
     (modify-syntax-entry ?\( "()" stab)
     (modify-syntax-entry ?\) ")(" stab)
@@ -115,11 +113,10 @@
     (modify-syntax-entry ?\' "'" stab)
     (modify-syntax-entry ?\` "'" stab)
     (modify-syntax-entry ?\, "'" stab)
-    (modify-syntax-entry ?\# "'" stab)
     (modify-syntax-entry ?\$ "'" stab)
     stab))
 
-;; FIXME: rename to get 
+
 (defun fn--read-next-sexp ()
   "Get the next sexp as a string. Behavior is determined by the
  forward-sexp and backward-sexp functions."
@@ -141,9 +138,8 @@
     (backward-sexp)
     (current-column)))
 
-;; FIXME: rename to fit conventions
 (defun fn--count-sexps-before (pos)
-  "Count the number of sexps between point and pos."
+  "Count the number of sexps before pos."
   (save-excursion
     (do ((n 0 (+ n 1)))
         ((> (point) pos) (- n 1))
@@ -157,53 +153,6 @@
 
 (defun fn--at-toplevel (parser-state)
   (zerop (car parser-state)))
-
-;; FIXME: deprecated
-(defun fn-surrounding-list ()
-  "Find out information about the list we're currently in.
- Returns a list (DELIM-CHAR DELIM-COL OPERATOR NUMBER CADR-POS)
- or nil if we're on the top level. DELIM-CHAR and DELIM-COL are
- the delimiter that opened this list and its column number.
- OPERATOR is a string, the first sexp in the list. NUMBER is the
- index (from 0) in the list of the next sexp after the mark (even
- if it's not there yet). Finally, CADR-POS is column number of
- the second element of the list, used for standard lisp-style indentation."
-  ;; first, check if we're inside quotes
-  (if (nth 3 (syntax-ppss))
-      '(?\" 0 "" 0)
-    (let ((d-ch nil)
-          (d-col 0)
-          (op "")
-          (n 0)
-          (start (point))
-          (c nil))
-      (save-excursion
-        (condition-case nil
-            (progn
-              (backward-up-list)
-              (setq d-ch (char-after))
-              (setq d-col (current-column))
-              (forward-char)
-              (setq op (fn--read-next-sexp))
-              (setq n (fn--count-sexps-before start))
-              ;; see if there is a CADR to set CADR-POS
-              (if (> n 0)
-                  (progn
-                    ;; go twice forward and once back to arrive at the beginning of the sexp
-                    (forward-sexp)
-                    (forward-sexp)
-                    (backward-sexp)
-                    (setq c (current-column)))))
-          ;; assume this is a scan error, meaning we're at the top level
-          (error
-           (setq d-ch nil)
-           (setq d-col 0)
-           (setq op "")
-           (setq n 0)
-           (setq c nil))))
-      (list d-ch d-col op n c))))
-
-;;; FIXME: change contexts to be records of type fn-context
 
 ;;; FIXME: this could be accomplished much more efficiently using the parser state from syntax-ppss.
 ;;; function should be rewritten from scratch.
@@ -246,7 +195,6 @@
           (error)))
       (list delim delim-col op op-col list-pos cadr-col))))
 
-
 ;; I should probably use defclass or cl-defstruct or something but it's late and I hate learning
 (defun context-delim (cxt) (car cxt))
 (defun context-delim-col (cxt) (cadr cxt))
@@ -255,84 +203,80 @@
 (defun context-list-pos (cxt) (nth 4 cxt))
 (defun context-cadr-col (cxt) (nth 5 cxt))
 
+(defun fn--compute-indent-column (cxt &optional offset)
+  "Figure out how to indent a line using the given context. If
+ offset is nil, indentation is done using built-in rules.
+ Otherwise, the column is the operator column plus the offset."
+  (if offset
+      (+ offset (context-op-col cxt))
+    ;; null offset means use standard indentation rules.
+    (let ((ind (fn--find-indenter (context-delim cxt) (context-op cxt))))
+      (if ind
+          (+ (fn--indenter-offset ind (context-list-pos cxt))
+             (context-delim-col cxt))
+          (or (context-cadr-col cxt)
+              (context-op-col cxt)
+              (print cxt))))))
 
-(defun fn-find-offset (indenter index)
+(defun fn--indenter-offset (indenter index)
   "Use an indenter to decide the offset of an element in an fn
  code list. Index is the index of the element in question.
  Returns an offset."
   (let* ((is-cycle (and (listp indenter)
                         (eq (car indenter) 'cycle)))
          (is-atom (or (atom indenter) is-cycle)))
-    (cond ((functionp indenter) (funcall indenter index))
-          (is-atom
-           (if is-cycle
-               (nth (mod index (- (length indenter) 1))
-                    (cdr indenter))
-             indenter))
-          ((zerop index)
-           (car indenter))
-          (t (fn-find-offset (cdr indenter) (- index 1))))))
+    (cond 
+     (is-atom
+      (if is-cycle
+          (nth (mod (+ index 1) (- (length indenter) 1))
+               (cdr indenter))
+        indenter))
+     ((= index 0) 1)
+     ((= index 1) (car indenter))
+     (t (fn--indenter-offset (cdr indenter) (- index 1))))))
 
-(defun fn-lookup-indenter (delim op)
+(defun fn--find-indenter (delim op)
   (cond
    ((null delim) 0)
    ((eql delim ?\()
     (let ((c (assoc op fn-operator-indent-alist 'equal)))
       (if c
           (cdr c)
-        fn-fallback-indenter)))
+        nil)))
    ((eql delim ?\[) 1)
    ((eql delim ?\{) '(cycle 1 3))
    ((eql delim ?\") nil)
-   (t fn-fallback-indenter)))
-
-(defun fn--compute-indent-amount (cxt &optional offset)
-  "Using the provided context, compute the standard lisp-style
-  indentation level. In most cases, this will line the point up
-  with the second element of the list, in standard lisp style.
-  The exception is when a custom indenter is defined for the
-  given operator/delimiter. Offset should be a number or nil. In
-  the former case, the line is indented that many columns beyond
-  the first character of the car of the containing list.
-  Otherwise, it is aligned with the cadr of the list (in the
-  usual lisp style). Eventually this will support custom
-  indentation for certain forms."
-  ;; TODO: add check for custom indenters
-
-  (if offset
-      (+ offset (context-op-col cxt))
-    ;; null offset means use standard indentation rules.
-    (or (context-cadr-col cxt)
-        (context-op-col cxt))))
+   (t nil)))
 
 ;; nil value indicates previous indent was a standard lisp indent/custom indenter
+;; this just cycles between 2 indent and standard indent
 (defun fn--next-indent-offset ()
   (case fn--prev-indent-offset
-    ((0) nil)
-    ((1) 0)
-    (t 1)))
+    ((nil) 1)
+    (t nil)))
 
 (defun fn--indent-line (again)
   "Internal indentation function."
-  (if (and inter again)
+  (if again
       (setq fn--prev-indent-offset (fn--next-indent-offset))
     (setq fn--prev-indent-offset nil))
-  (let ((start (point)))
-    (beginning-of-line)
-    (let ((cxt (fn--current-context))
-          (offset (when again fn--prev-indent-offset)))
-      (goto-char start)
-      (indent-line-to (fn--compute-indent-amount cxt offset)))))
-
-(defvar fn-reindent-commands '(fn-indent-line)
-  "Commands in this list are used")
+  (beginning-of-line)
+  (let ((cxt (fn--current-context))
+        (offset (when again fn--prev-indent-offset)))
+    (indent-line-to (fn--compute-indent-column cxt offset))))
 
 (defun fn-indent-line ()
   "Indent current line as fn code"
   (interactive "*")
-  (fn--indent-line (eq last-command this-command)
-                   (memq this-command fn-reindent-commands)))
+  (fn--indent-line (and (eq last-command this-command)
+                        (memq this-command fn-indent-cycle-commands))))
 
+(defvar fn-indent-cycle-commands
+  '(fn-indent-line indent-for-tab-command indent-according-to-mode)
+  "commands which trigger indent cycling")
+
+;; TODO: add more special cases (e.g. formatting when the operator is alone on
+;; the first line, formatting let bindings, etc)
 (defun fn-mode ()
   "Major mode for editing fn programming language source code."
   (interactive)
