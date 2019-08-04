@@ -21,7 +21,9 @@
   (:import-from :fn.scanner :line)
   (:export :line :value :contents :expr :name :contents :ast-string :ast-number :ast-paren
            :ast-bracket :ast-brace :ast-quot :ast-quasiquot :ast-unquot :ast-unquot-splice
-           :ast-dollar :ast-dot :ast-sym :convert-ast))
+           :ast-dollar :ast-dot :ast-sym :ast-string? :ast-number? :ast-paren?
+           :ast-bracket? :ast-brace? :ast-quot? :ast-quasiquot? :ast-unquot? :ast-unquot-splice?
+           :ast-dollar? :ast-dot? :ast-sym?))
 
 (in-package :fn.ast)
 
@@ -38,8 +40,14 @@
      ;;
      ,@(mapcar
         $(let ((name (intern
-                      (concatenate 'string "AST-" (string (car $))))))
-           `(defstruct (,name (:constructor ,name ,(cdr $)))
+                      (concatenate 'string "AST-" (symbol-name (car $)))))
+               (predicate (intern
+                           (concatenate 'string
+                                        "AST-"
+                                        (symbol-name (car $))
+                                        "?"))))
+           `(defstruct (,name (:constructor ,name ,(cdr $))
+                              (:predicate ,predicate))
               ,@(cdr $)))
         specs)))
 

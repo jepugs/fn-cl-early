@@ -24,6 +24,7 @@
    :length< :length=
    ;; hash-table functions
    :make-ht :make-eq-ht :ht-keys :ht-has-key :ht-values :ht->plist :ht-conc :ht-append :ht-del-keys
+   :copy-ht
    ;; control-flow macros
    :aif :it :rlambda :recur :-> :->> :->as
    ;; misc functionality
@@ -281,6 +282,16 @@ contents of the table."
              ht)
     res))
 
+(defun copy-ht (ht)
+  (let ((res (make-hash-table :test (hash-table-test ht)
+                              :rehash-size (hash-table-rehash-size ht)
+                              :rehash-threshold (hash-table-rehash-threshold ht)
+                              :size (hash-table-size ht))))
+    (maphash (lambda (k v)
+               (setf (gethash k res) v))
+             ht)
+    res))
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;;;; Macro-writing Facilities
@@ -321,7 +332,11 @@ contents of the table."
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-;;;; Misc functions
+;;;; Misc functions & macros
+
+(defmacro defconstant-1 (name value)
+  "Like DEFCONSTANT but will not redefine a value on multiple successive calls."
+  `(defconstant ,name (if (boundp ',name) ,name ,value)))
 
 (defun xor (a b)
   (or (and a (not b))
