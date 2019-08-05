@@ -17,7 +17,7 @@
 
 (defpackage :fn.main
   (:documentation "Main routine for fn")
-  (:use :cl :fn.scanner :fn.ast :fn.parser :fn.util)
+  (:use :cl :fn.scanner :fn.ast :fn.parser :fn.util :fn.values :fn.eval)
   (:export :main))
 
 (in-package :fn.main)
@@ -35,20 +35,26 @@
       (sb-ext:exit :code -1))
     (if (cdr args)
         (with-open-file (in (cadr args) :direction :input) 
-          (princ (convert-ast (parse (scan in)))))
+          (mapcar $(fnprintln (eval-ast $))
+                  (parse (scan in))))
         (loop (handler-case
                   (progn
                     (princ "> ")
                     (finish-output)
-                    
-                    (princ (convert-ast (parse (scan-from-string (read-line)))))
-                    (terpri))
+
+                    (mapcar $(fnprintln (eval-ast $))
+                            (parse (scan-from-string (read-line)))))
 
                 ;; exit on SIGINT
                 (sb-int::interactive-interrupt (x)
                   (princ x)
                   (terpri)
                   (sb-ext:exit :code -1))
+
+                ;; exit on end of file
+                (end-of-file ()
+                  (terpri)
+                  (sb-ext:exit :code 0))
 
                 ;; print out and continue on fn-error
                 (fn-error (x)
@@ -57,5 +63,3 @@
 
 (defun show-usage ()
   (format t "Usage: fn [script file]~%"))
-
-

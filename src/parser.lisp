@@ -19,7 +19,7 @@
   (:documentation "parser for fn")
   (:use :cl :fn.util :fn.scanner :fn.ast :fn.parser-gen)
   (:import-from :fn.scanner :line)
-  (:export :parse :def-fn-parser :make-fn-parser-state))
+  (:export :parse :parse-string :def-fn-parser :make-fn-parser-state))
 
 (in-package :fn.parser)
 
@@ -147,3 +147,6 @@
   `(defparser ,name ,fn-grammar ,@fn-grammar-callbacks))
 
 (def-fn-parser parse)
+
+(defun parse-string (str)
+  (parse (scan-from-string str)))

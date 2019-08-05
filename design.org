@@ -778,3 +778,11 @@ i.e.
 
 
 #+END_SRC
+
+
+* Tree Walker
+
+The first interpreter is a tree walker. The reason for this is that it is far easier to make
+extensions and changes to this sort of interpreter than to a VM based one.
+
+

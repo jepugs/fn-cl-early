@@ -28,7 +28,7 @@
    ;; control-flow macros
    :aif :it :rlambda :recur :-> :->> :->as
    ;; misc functionality
-   :symb :quoted-p :name-eq :macroexpand-all :with-gensyms :xor
+   :defconstant-1 :symb :quoted-p :name-eq :macroexpand-all :with-gensyms :xor
    ;; error handling
    :fn-error))
 
@@ -173,7 +173,7 @@
 (defun length< (lst n)
   "Tell if the length of LST is less than N without computing the full length of LST. This is useful
  when N is small and LST might be very long."
-  (null (drop n lst)))
+  (null (drop (- n 1) lst)))
 
 (defun length= (lst n)
   "Tell if the length of LST is less than N without computing the full length of LST. This is useful
@@ -336,7 +336,8 @@ contents of the table."
 
 (defmacro defconstant-1 (name value)
   "Like DEFCONSTANT but will not redefine a value on multiple successive calls."
-  `(defconstant ,name (if (boundp ',name) ,name ,value)))
+  `(unless (boundp ',name)
+     (defconstant ,name ,value)))
 
 (defun xor (a b)
   (or (and a (not b))
@@ -348,7 +349,7 @@ contents of the table."
 ;;;; Error generation
 
 (define-condition fn-error (error)
-  ((source :initarg :source
+  ((module :initarg :module
            :type string
            :documentation "The part of the interpreter in which the error occurred.")
    (place :initarg :place
@@ -359,8 +360,8 @@ contents of the table."
 
 (defmethod print-object ((object fn-error) stream)
   (let ((*standard-output* stream))
-    (with-slots (source place message) object
-      (princ source)
+    (with-slots (module place message) object
+      (princ module)
       (princ
        (if place
            (format nil " error at line ~a:" place)
@@ -371,5 +372,5 @@ contents of the table."
       (terpri)
       (finish-output))))
 
-(defun fn-error (source message &optional place)
-  (error 'fn-error :source source :place place :message message))
+(defun fn-error (module message &optional place)
+  (error 'fn-error :module module :place place :message message))
