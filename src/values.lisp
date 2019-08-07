@@ -29,14 +29,16 @@
    ;; functions and local environments
    :cell :make-cell :cell-value :value :cell-mutable :mutable
    :init-env :env-get :env-add
-   :fnfun :param-list :body :env :param-list-syms :fnfun
+   :param-list :make-param-list :pos :keyword :vari
+   :fnfun :params :body :env :closure :param-list-syms :make-fnfun :fnfun?
    ;; general objects
    :fntype :name :fields :fntype-name :make-fntype :fntype?
    :fnobj :type :contents :make-fnobj :fnobj?
+   :fnmethod :make-fnmethod :fnmethod?
    ;; pretty printing
    :->string :fnprint :fnprintln
    ;; quoting
-   :bracket-sym-name :dollar-sym-name :dot-sym-name :quot-sym-name
+   ;;:bracket-sym-name :dollar-sym-name :dot-sym-name :quot-sym-name
    :ast->fnval :fnval->ast))
 
 (in-package :fn.values)
@@ -44,12 +46,6 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;;;; constants
-
-(eval-when (:compile-toplevel :load-toplevel :execute)
-  (defconstant-1 bracket-sym-name "List")
-  (defconstant-1 dollar-sym-name "dollar-fn")
-  (defconstant-1 dot-sym-name "get")
-  (defconstant-1 quot-sym-name "quote"))
 
 (eval-when (:compile-toplevel :load-toplevel :execute)
 
@@ -83,7 +79,7 @@
   ;;Unique integer identifier for this symbol
   (id nil
       ;; I use 48-bits here to ensure that an immediate representation will be used. FIXNUMs in SBCL
-      ;; are signed 62 bit numbers so this gives us spare
+      ;; are signed 62 bit numbers so this gives us spare bits
       :type (unsigned-byte 48)
       :read-only t))
 
@@ -127,14 +123,14 @@
     res))
 (defun fnmapcar (fun x)
   (loop
-     for src = x then (cdr x)
-     until (empty? x)
-     collect (funcall fun (car x))))
+     for src = x then (cdr src)
+     until (empty? src)
+     collect (funcall fun (car src))))
 (defun fnmapcan (fun x)
   (loop
-     for src = x then (cdr x)
-     until (empty? x)
-     nconc (funcall fun (car x))))
+     for src = x then (cdr src)
+     until (empty? src)
+     nconc (funcall fun (car src))))
 
 (defun fnstring (&rest objects)
   (apply #'concatenate 'string
@@ -149,7 +145,7 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-;;;; functions and local environments
+;;;; environments, functions, and objects
 
 ;;; a generic memory cell. This wraps an fn value so that modifications to the value in the cell
 ;;; will be seen across all closures, etc containing it
@@ -164,7 +160,7 @@
   (let ((res (if parent
                  (copy-ht parent)
                  (make-hash-table :test #'eql :size (length syms)))))
-    (mapc $(setf (gethash (sym-id $) syms)
+    (mapc $(setf (gethash (sym-id $) res)
                  (make-cell :mutable t))
           syms)
     res))
@@ -177,66 +173,44 @@
   "Add a new cell to an environment"
   (setf (gethash (sym-id sym) env) cell))
 
-(defstruct fnfun
-  ;; parameter list used to bind arguments
-  (param-list nil :type list :read-only t)
-  ;; either a list of fn code objects (see eval.lisp) or a Common Lisp function object. In the
-  ;; latter case, the function is invoked directly with a list of fn arguments, allowing Common Lisp
-  ;; functionality to be provided to fn.
+;; function parameter object. Used to efficiently bind arguments.
+(defstruct (param-list (:predicate fnparams?))
+  ;; ALIST of positional parameters. Non-null value indicates that the parameter is optional.
+  (pos nil :type list :read-only t)
+  ;; ALIST of keyword parameters
+  (keyword nil :type list :read-only t)
+  ;; variadic parameter
+  (vari nil :type (or sym null) :read-only t))
+
+(defstruct (fnfun (:predicate fnfun?))
+  ;; parameter list
+  (params nil :type (or param-list null) :read-only t)
+  ;; either a list of fn code objects (see eval.lisp) or a function. In the latter case, the
+  ;; function is invoked directly with a list of fn values, allowing definition of built-in
+  ;; functions. In the former, the code in the body is evaluated in an appropriate lexical
+  ;; environment.
   (body nil :type (or list function) :read-only t)
-  ;; environment including enclosed variables and arguments
-  (env nil :read-only t))
-
-(defun param-list-syms (param-list)
-  "Get a list of symbols bound by a parameter list. This function assumes that the param list has
- correct syntax."
-  (reduce (lambda (acc x)
-            (cond
-              ;; add any plain symbol except & and _
-              ((sym? x)
-               (if (or (sym-name-is? "&" x)
-                       (sym-name-is? "_" x))
-                   acc
-                   (cons x acc)))
-              ;; from here we can assume the parameter is a list
-
-              ;; required keywords
-              ((and (sym? (car x))
-                    (sym-name-is? quot-sym-name (car x)))
-               (cons (cadr x) acc))
-
-              ;; add optional args
-              ((sym? (car x))
-               (cons (car x) acc))
-
-              ;; add required keywords
-              (t (cons (cadar x) acc))))
-          param-list
-          :initial-value nil))
-
-(defun fnfun (param-list body &optional parent-env)
-  "Create a function object"
-  (let ((params (param-list-syms param-list)))
-    (make-fnfun :param-list param-list
-                :body body
-                ;; no reason to create an environment in this case
-                :env (if (functionp body)
-                         nil
-                         (init-env params parent-env)))))
-
+  ;; captured lexical environment
+  (closure nil :read-only t))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-;;;; general objects
+;;;; object system
 
-(defstruct (fntype (:predicate fntype?) :copier)
+(defstruct (fnclass (:predicate fnclass?) :copier)
   (name nil :type sym :read-only t)
-  (fields nil :type list :read-only t))
+  (fields nil :type list :read-only t)
+  (constructor nil :type list :read-only t))
 
 (defstruct (fnobj (:predicate fnobj?) :copier)
-  (type nil :type fntype :read-only t)
-  ;; contents are stored as a plist
-  (contents nil :type list))
+  (class nil :type fnclass :read-only t)
+  ;; contents are stored in a hash table. Keys are symbol IDs
+  (contents nil :type hash-table :read-only t))
+
+(defstruct (fnmethod (:predicate fnmethod?) :copier)
+  (params)
+  ;; list of symbols indicating method names
+  (dispatch nil :type hash-table :read-only t))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -245,19 +219,20 @@
 (defun ->string (x)
   "Convert an fn object to a string."
   (cond
-    ((empty? x) "()")
+    ((empty? x) "[]")
     ((fnnull? x) "Null")
     ((true? x) "True")
     ((false? x) "False")
     ((num? x) (princ-to-string x))
     ((fnlist? x)
-     (format nil "(~{~a~^ ~})" (fnmapcar #'->string x)))
-    ((string? x) (concatenate 'string "\"" x "\""))
+     (format nil "[~{~a~^ ~}]" (fnmapcar #'->string x)))
+    ((string? x) x)
     ((sym? x) (slot-value x 'name))
     ((fnobj? x) (format nil
                         "(~a ~{~a~^ ~})"
                         (fntype-name (fnobj-type x))
-                        (mapcar #'->string (fnobj-contents x))))))
+                        (mapcar #'->string (fnobj-contents x))))
+    ((fnfun? x) "#<FUNCTION>")))
 
 (defun fnprint (x &optional (stream *standard-output*))
   (princ (->string x) stream))
