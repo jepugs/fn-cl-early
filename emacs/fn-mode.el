@@ -13,7 +13,7 @@
 (defvar fn-definers
   '("def" "defmacro" "defvar"))
 (defvar fn-special-operators
-  '("@" "apply" "defimpl" "defproto" "deftype" "case" "cond" "do" "if" "fn" "let" "get" "set")
+  '("@" "apply" "defmethod" "deftype" "case" "cond" "do" "if" "fn" "let" "get" "set")
   "Special operators that have their names highlighted")
 (defvar fn-constants
   '("$" "$0" "$1" "$2" "$3" "$4" "$5" "&" "true" "false" "null" "_"))
@@ -23,10 +23,9 @@
   '(("case" 4 cycle 2 4)
     ("cond" cycle 2 4)
     ("def" 4 . 2)
-    ("deftype" 4 . 2)
-    ("defimpl" 4 cycle 2 4)
+    ("defclass" 4 . 2)
+    ("defmethod" 4 . 2)
     ("defmacro" 4 . 2)
-    ("defproto" 4 . 2)
     ("defvar" 4 . 2)
     ("do" . 2)
     ("fn" 4 . 2)
@@ -43,21 +42,30 @@
    ;; definition names
    (list (concat
           "("
-          (regexp-opt fn-definers t)
+          (regexp-opt '("def" "defvar") t)
           ;; whitespace
           "\\_>[[:space:]]+"
           ;; symbol
           "\\_<\\(\\(?:\\s_\\|\\w\\)+\\)\\_>")
          '(2 font-lock-variable-name-face))
-   ;; function definitions
+   ;; function & macro definitions
    (list (concat
           "("
-          (regexp-opt fn-definers t)
+          (regexp-opt '("def" "defmacro" "defvar") t)
           ;; whitespace and opening paren
           "\\_>[[:space:]]+("
           ;; symbol
           "\\_<\\(\\(?:\\s_\\|\\w\\)+\\)\\_>")
-         '(2 font-lock-function-name-face))   
+         '(2 font-lock-function-name-face))
+   ;; method definition
+   (list (concat
+          "("
+          (regexp-opt '("def" "defmethod") t)
+          ;; whitespace and TWO opening parens
+          "\\_>[[:space:]]+(("
+          ;; symbol
+          "\\_<\\(\\(?:\\s_\\|\\w\\)+\\)\\_>")
+         '(2 font-lock-function-name-face))
    ;; other special operators
    (list (concat "("
                  (regexp-opt fn-special-operators t)

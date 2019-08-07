@@ -184,103 +184,58 @@ Options should allow customization of the object's internal representation, cons
 E.g. fields may be marked mutable or have type restrictions applied.
 
 
-** Protocols and Implementation
+** Polymorphism via Methods
 
-A protocol is a group of functions whose behaviors are decided based upon the types of some of their
-arguments, called dispatch arguments.
+fn provides polymorphism in the form of methods. fn's methods support multiple dispatch (i.e. they
+are multimethods). The syntax is demonstrated below.
 
 #+BEGIN_SRC fn
-(defproto (Proto-Name types...)
-  (method-1 args)
-  (method-2 args))
-(defimpl (Proto-Name types...)
-  method-1 implementation-function-1
-  method-2 implementation-function-2)
+;; To define a multimethod, you must specify its name, a list of one or more dispatch parameters,
+;; and a parameter list containing all the dispatch parameters.
 
-;; Example: the built-in Mul protocol
-(defproto (Mul L R)
-  (mul (L R) "Multiply two numbers"))
+(defmethod ((<name> <dispatch-params>) <params>))
 
-;; Example: Implementing multiplication on a custom 2D vector type
-(deftype (Vec2 x y))
+;; Methods are implemented using def. Syntax is very similar to function definition except that
+;; the name of the method and the dispatch types must also be specified.
+(def ((<name> <dispatch-types>) <params>)
+  <implementation-body>)
 
-(def (vec2-scalar-mul s v)
-  "Multiply a vec2 by a scalar"
-  (Vec2 (* s v.x) (* s v.y)))
+;;; EXAMPLE: the call method (used to treat arbitrary objects as functions)
+;; call does dispatch on the argument obj
+(defmethod ((call obj) obj & args))
 
+;; implementation of call on classes
+(def ((call Class) class & args)
+  (apply class.constructor args))
 
-;; define for all four scalar combinations
-(defimpl (Mul Num Vec2)
-  mul vec2-scalar-mul)
-(defimpl (Mul Vec2 Num)
-  mul $(vec2-scalar-mul $1 $0))
+;;; EXAMPLE: the mul method used to extend multiplication.
+;; mul does multiple dispatch on the arguments l and r
+(defmethod ((mul l r) l r))
 
-(* (Vec2 1.0 2.3) -2)
-;;=> (Vec2 -2.0 -4.6)
-(* 1.1 (Vec2 1.2 1.3))
-;;=> (Vec2 1.32 1.43)
+;; implement methods using def. Parameter names may be changed.
+(def ((mul Num String) ct str)
+  (loop (i res) (ct "")
+    (if (= i 0)
+        res
+        (recur (- i 1)
+               (append res str)))))
+
+(def ((mul String Num) str ct)
+  ;; simply flip the arguments 
+  (mul ct str))
+
+;; potential alternative syntax?
+(set (@ mul [String Num]) function)
 
 #+END_SRC
 
-*** Protocol dispatch
+*** Implementation
 
-Protocols may only be implemented on concrete types.
+Dispatch is done using hash trees. The depth of the tree is determined by the number of dispatch
+parameters. One layer is added for each dispatch parameter.
 
-~defimpl~ types may be formatted as ~(or Type1 Type2 etc)~. This is identical to implementing the
-protocol on each of these types individually. This generalizes to protocols of multiple types by
-taking every combination of types that matches the or patterns.
-
-This creates a peculiar idiosyncracy around methods which use multiple dispatch arguments of the
-same type. In this case, the concrete types must match. E.g.
-
-#+BEGIN_SRC fn
-(defproto (My-Proto X)
-  (combine X X))
-
-(defimpl (My-Proto (or Num String))
-  (combine (fn (a b) (String a b))))
-
-;; this is legal
-(combine 21 12) ; => "2112"
-;; so is this
-(combine "foo" "bar") ; => "foobar"
-
-;; but this is a type error
-(combine 3 "o 'clock")
-
-;; because the above implementation is really just identical to doing both of these expressions
-(defimpl (My-Proto Num)
-  (combine (fn (a b) (String a b))))
-(defimpl (My-Proto String)
-  (combine (fn (a b) (String a b))))
-
-#+END_SRC
-
-For protocol dispatch, a hierarchy of hash tables is used. The top level key is the first type, then
-the second, and so on, until the last hash table, for which the key is the method name.
-
-In the future protocol type dispatch may be made more general. In this case, the original dispatch
-method will still be used, in order to make dispatch on concrete types efficient, but in the event
-that no suitable method is found, other criteria will be used. This may include allowing
-implementations to be defined in terms of other protocols, or making the ~(or ...)~ syntax behave in a
-more general way, thus removing the type error in the example above. However, this would greatly
-complicate implementation.
-
-#+BEGIN_SRC fn
-(defproto (Group X)
-  (gp-mul X X)
-  (gp-inv X))
-
-#+END_SRC
-
-*** Future features
-
-Protocols should be able to have methods that don't create global function objects. Such methods
-could only be accessed through the protocol object. This would be helpful, e.g. for the ~Mul~
-interface because the ~mul~ function is redundant compared to the ~*~ operator.
-
-I would like to add functionality where 
-
+In the future, dispatch behavior will likely become more complicated, as features like or, satisfies,
+and wildcard types are added.
 
 ** Built-in types
 
@@ -302,23 +257,12 @@ The following types are built into fn.
 Foreign data structures and bit array types will be added in the future.
 
 
-** Built-in Protocols
-
-- Add :: used for the + operator
-- Sub :: used for the - operator
-- Mul :: used for the * operator
-- Div :: used for the / operator
-- Callable :: allows the type to be called like a function
-- Get :: specifies behavior of @
-
-
 ** Misc Type Functions
 
-Use ~(type-of obj)~ to get the type of an object.
+Use ~(type-of obj)~ to get the type of an object. This returns a symbol equal to the name of the class
+of obj. I.e., ~(type-of obj)~ is equivalent to ~(get (class-of obj) 'name)~.
 
-The slots of an object can be accessed directly using ~(slot-value OBJ SLOT)~. Mutable slots can be
-set using ~(set (slot-value ...) ...)~.
-
+The slots of an object can be accessed using ~get~.
 
 * Version 0 Spec
 
