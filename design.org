@@ -90,6 +90,59 @@ some modern features.
   #+END_SRC
 
 
+* Functions
+
+There are two special operators that create functions: ~fn~ and ~dollar-fn~. The latter is usually
+written using dollar-sign syntax. The expression ~$(function-body)~ expands to ~(dollar-fn
+(function-body))~.
+
+#+BEGIN_SRC fn
+  ;; syntax for fn is
+  (fn (<parameters>) <body>)
+
+  ;; there are three kinds of parameters recognized by fn: positional, keyword, and variadic.
+  ;; Positional params are denoted by plain symbols and keyword params by quoted symbols. Variadic
+  ;; parameters are defined by using the special symbol & followed by a symbol indicating the name of
+  ;; the variable.
+
+  ;; function that takes two positional arguments and sums their reciprocals
+  (def sum-inv 
+    (fn (x y)
+      (+ (/ 1 x) (/ 1 y))))
+  (sum-inv 0.5 0.2) ;; => 7
+
+  ;; function that takes one positional argument and two keyword arguments. This function will 
+  ;; apply the function if-num if v is a number, otherwise it will apply 'otherwise.
+  (def apply-if-num
+    (fn (v 'if-num 'if-not)
+      (if (num? v)
+          (if-num v)
+          (if-not v))))
+  ;; to call functions with keyword arguments, simply put the quoted symbols in the argument list
+  (apply-if-num "hello" 'if-num String 'if-not println) ;; prints "hello"
+  ;; keyword arguments may be provided in any order
+  (apply-if-num 2 'if-not println 'if-num String) ;; => "2"
+
+  ;; keyword and positional parameters can be made optional by putting them in parentheses followed 
+  ;; by a default expression. Required parameters may not succeed optional ones.
+  (def increment (num (by 1))
+    (+ num by))
+  (increment 17) ; => 18 (uses default value for by)
+  (increment 17 2); => 18
+
+  ;; variadic arguments must come last in an argument list.
+  (def string-sum (& numbers)
+    (String (apply + numbers)))
+
+#+END_SRC
+
+*** Variadic arguments and keywords
+
+When a function accepts both keywords and variadic arguments, all the variadic arguments must be
+alternating symbol and value pairs, just like normal keyword arguments. This behavior is virtually
+identical to the behavior of ~&ALLOW-OTHER-KEYS~ in Common Lisp.
+
+
 * Type System
 
 ** Type definition
@@ -169,6 +222,56 @@ arguments, called dispatch arguments.
 
 #+END_SRC
 
+*** Protocol dispatch
+
+Protocols may only be implemented on concrete types.
+
+~defimpl~ types may be formatted as ~(or Type1 Type2 etc)~. This is identical to implementing the
+protocol on each of these types individually. This generalizes to protocols of multiple types by
+taking every combination of types that matches the or patterns.
+
+This creates a peculiar idiosyncracy around methods which use multiple dispatch arguments of the
+same type. In this case, the concrete types must match. E.g.
+
+#+BEGIN_SRC fn
+(defproto (My-Proto X)
+  (combine X X))
+
+(defimpl (My-Proto (or Num String))
+  (combine (fn (a b) (String a b))))
+
+;; this is legal
+(combine 21 12) ; => "2112"
+;; so is this
+(combine "foo" "bar") ; => "foobar"
+
+;; but this is a type error
+(combine 3 "o 'clock")
+
+;; because the above implementation is really just identical to doing both of these expressions
+(defimpl (My-Proto Num)
+  (combine (fn (a b) (String a b))))
+(defimpl (My-Proto String)
+  (combine (fn (a b) (String a b))))
+
+#+END_SRC
+
+For protocol dispatch, a hierarchy of hash tables is used. The top level key is the first type, then
+the second, and so on, until the last hash table, for which the key is the method name.
+
+In the future protocol type dispatch may be made more general. In this case, the original dispatch
+method will still be used, in order to make dispatch on concrete types efficient, but in the event
+that no suitable method is found, other criteria will be used. This may include allowing
+implementations to be defined in terms of other protocols, or making the ~(or ...)~ syntax behave in a
+more general way, thus removing the type error in the example above. However, this would greatly
+complicate implementation.
+
+#+BEGIN_SRC fn
+(defproto (Group X)
+  (gp-mul X X)
+  (gp-inv X))
+
+#+END_SRC
 
 *** Future features
 
