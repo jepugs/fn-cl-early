@@ -41,7 +41,7 @@
       (bracket -> @left-bracket (* expr) @right-bracket)
       (brace -> @left-brace (* expr) @right-brace)
 
-      (unary -> quot / quasiquot / unquot / unquot-splicing)
+      (unary -> quot / quasiquot / unquot / unquot-splice)
       (quot -> @quote expr)
       (quasiquot -> @backtick expr)
       (unquot -> @comma expr)

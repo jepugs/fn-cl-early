@@ -38,6 +38,9 @@
 (defconstant-1 dollar-sym-name "dollar-fn")
 (defconstant-1 dot-sym-name "@")
 (defconstant-1 quot-sym-name "quote")
+(defconstant-1 quasiquot-sym-name "quasiquote")
+(defconstant-1 unquot-sym-name "unquote")
+(defconstant-1 unquot-splice-sym-name "unquote-splice")
 (defconstant-1 true-sym-name "true")
 (defconstant-1 false-sym-name "false")
 (defconstant-1 null-sym-name "null")
@@ -66,27 +69,26 @@
 
      ((ast-paren? a)  (mapcar $(ast->code $ symtab)
                              (slot-value a 'contents)))
-     ((ast-bracket? a) (cons (symtab-intern bracket-sym-name symtab)
+     ((ast-bracket? a) (cons (code-intern a bracket-sym-name symtab)
                              (mapcar $(ast->code $ symtab)
                                      (slot-value a 'contents))))
-     ((ast-brace? a) (cons (symtab-intern brace-sym-name symtab)
+     ((ast-brace? a) (cons (code-intern a brace-sym-name symtab)
                            (mapcar $(ast->code $ symtab)
                                    (slot-value a 'contents))))
 
      ((ast-quot? a) (list (code-intern a quot-sym-name symtab)
                           (ast->code (slot-value a 'expr) symtab)))
+     ((ast-quasiquot? a) (list (code-intern a quasiquot-sym-name symtab)
+                          (ast->code (slot-value a 'expr) symtab)))
+     ((ast-unquot? a) (list (code-intern a unquot-sym-name symtab)
+                          (ast->code (slot-value a 'expr) symtab)))
+     ((ast-unquot-splice? a) (list (code-intern a unquot-splice-sym-name symtab)
+                          (ast->code (slot-value a 'expr) symtab)))
 
-     ((or (ast-quasiquot? a)
-          (ast-unquot? a)
-          (ast-unquot-splice? a))
-      (fn-error "FN.CODE"
-                "Quasiquotation is not implemented"
-                (slot-value a 'line)))
-
-     ((ast-dollar? a) (list (symtab-intern dollar-sym-name symtab)
+     ((ast-dollar? a) (list (code-intern a dollar-sym-name symtab)
                             (ast->code (slot-value a 'expr) symtab)))
 
-     ((ast-dot? a) (list (symtab-intern dot-sym-name symtab)
+     ((ast-dot? a) (list (code-intern a dot-sym-name symtab)
                          (ast->code (slot-value a 'left) symtab)
                          (ast->code (slot-value a 'right) symtab)))
 
@@ -118,6 +120,12 @@
   (with-slots (data) c
     (and (code-sym? (car data))
          (string= (code-sym-name (car data)) op-name))))
+
+(defun code->fnvalue (c)
+  (with-slots (data) c
+    (if (listp data)
+        (apply #'fnlist (mapcar #'code->fnvalue data))
+        data)))
 
 (eval-when (:load-toplevel :compile-toplevel :execute)
   (defmacro code-error (c format-string &rest format-args)
@@ -160,9 +168,9 @@
   (defmacro def-op (name arg-specs &body body)
     "DEF-OP defines a special operator in fn by adding it to SPECIAL-OP-DISPATCH.
 
- NAME : a string denoting the operator's name
- ARG-SPECS : a list describing the operator's arguments (see below)
- BODY : function body describing the operator's behavior
+ NAME       : a string denoting the operator's name
+ ARG-SPECS  : a list describing the operator's arguments (see below)
+ BODY       : function body describing the operator's behavior
 
  All the names in the ARG-SPECs list are bound to corresponding arguments for use in the function
  body. In addition, variables named C, ENV, and INTERPRETER are bound holding evaluation
@@ -233,15 +241,20 @@
     (num (reduce #'* args)))
   (defun-builtin "/" args
     (num (reduce #'/ args)))
+  (defun-builtin "=" args
+    (if (apply #'equal args)
+        true
+        false))
   (defun-builtin "print" args
     (if (length= args 1)
         (fnprint (car args))
-        (runtime-error "print called with too many arguments")))
+        (runtime-error "print called with too many arguments"))
+    fnnull)
   (defun-builtin "println" args
     (if (length= args 1)
-        (progn (fnprintln (car args))
-               (terpri))
-        (runtime-error "println called with too many arguments")))
+        (fnprintln (car args))
+        (runtime-error "println called with too many arguments"))
+    fnnull)
   (defun-builtin "String" args
     (apply #'fnstring args))
   (defun-builtin "List" args
@@ -374,23 +387,24 @@
                                        vari-acc
                                        (cddr args))
                          (if vari
+                             ;; vari-acc is built backwards
                              (bind-keyword acc
-                                           (cons (cons k v) vari-acc)
+                                           (cons v (cons k vari-acc))
                                            (cddr args))
                              (runtime-error "Unknown keyword ~s"
                                             (sym-name k)))))
                    ;; make sure all required keywords are bound
                    (let ((res
                           (mapcar $(or (assoc (car $) acc :test #'equal)
-                                       (get-optional $))
+                                       (cons (car $) (get-optional $)))
                                   keyword)))
                      (if vari
-                         (cons (cons vari (apply #'fnlist vari-acc))
+                         (cons (cons vari (apply #'fnlist (nreverse vari-acc)))
                                res)
                          res))))
              (bind-vari (args)
                (if vari
-                   (list (cons vari args))
+                   (list (cons vari (apply #'fnlist args)))
                    (if args
                        (runtime-error "Too many arguments")
                        nil))))
@@ -399,6 +413,13 @@
         (mapc $(set-var (car $) (cdr $) res interpreter) binding-alist)
         res))))
 
+(defun call-fun (fnfun args interpreter)
+  (with-slots (params body closure) fnfun
+    (if (functionp body)
+        (funcall body args)
+        (let ((env (bind-params params args closure interpreter)))
+          (eval-body body env interpreter)))))
+
 (defun eval-funcall (c env interpreter)
   "Evaluate a function call."
   (let ((args (mapcar $(eval-code $ env interpreter)
@@ -406,11 +427,7 @@
         (op (eval-code (code-car c) env interpreter)))
     (unless (fnfun? op)
       (runtime-error "Operator is not a function"))
-    (with-slots (params body closure) op
-      (if (functionp body)
-          (funcall body args)
-          (let ((env (bind-params params args closure interpreter)))
-            (eval-body body env interpreter))))))
+    (call-fun op args interpreter)))
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -567,7 +584,8 @@
          (pos (remove-if-not $(or (and (code-sym? $)
                                        (not (string= (code-sym-name $) "&")))
                                   (and (code-list? $)
-                                       (code-sym? (code-car $))))
+                                       (code-sym? (code-car $))
+                                       (not (code-quoted-sym? $))))
                              non-vari))
          (keyword (remove-if-not $(or (code-quoted-sym? $)
                                       (and (code-list? $)
@@ -594,3 +612,135 @@
   (make-fnfun :params (code->param-list (code-data params))
               :body body
               :closure env))
+
+;; (defun find-$-syms (expr)
+;;   (let (())))
+
+;; (def-op "dollar-fn" (expr)
+;;   (let* (($-syms (find-$-syms expr))
+;;          (pos (remove-)))
+;;     (make-param-list )))
+
+(def-op "if" (test then else)
+  (let ((b (eval-code test env interpreter)))
+    (if (or (eq b fnnull)
+            (eq b false))
+        (eval-code else env interpreter)
+        (eval-code then env interpreter))))
+
+(defun validate-cond-body (body)
+  (when (null body)
+    (runtime-error "empty cond body"))
+  (unless (evenp (length body))
+    (runtime-error "cond body has odd length")))
+
+(def-op "cond" (& (body #'validate-cond-body))
+  (let ((clauses (group 2 body)))
+    (rlambda (src) (clauses)
+      (when (null src)
+        (runtime-error "every cond clause failed"))
+      (let ((x (eval-code (caar src) env interpreter)))
+        (if (or (eq x fnnull)
+                (eq x false))
+            (recur (cdr clauses))
+            (eval-code (cadar src) env interpreter))))))
+
+(def-op "quote" (code)
+  (code->fnvalue code))
+
+(def-op "quasiquote" (code)
+  (eval-quasiquote code env interpreter))
+
+(def-op "unquote" (code)
+  (runtime-error "unquote outside of quasiquote"))
+
+(def-op "unquote-splice" (code)
+  (runtime-error "unquote-splice outside of quasiquote"))
+
+;; TODO: add syntax checking for nested quaisquote, unquote, and unquote splicing (that is, check
+;; that each one only has one argument).
+(defun eval-quasiquote (code env interpreter)
+  (let ((qq (fnintern quasiquot-sym-name interpreter))
+        (uq (fnintern unquot-sym-name interpreter))
+        (us (fnintern unquot-splice-sym-name interpreter)))
+    ;; depth is the number of nested quasiquotes
+    (labels ((qqlist (src depth)
+               (let ((c (car src)))
+                 (cond
+                   ;; empty list
+                   ((null src) empty)
+
+                   ;; atoms
+                   ((not (code-list? c))
+                    (cons (code->fnvalue c)
+                          (qqlist (cdr src) depth)))
+
+                   ;; nested quasiquote
+                   ((eq (code-data (code-car c)) qq)
+                    (unless (length= (code-data c) 2)
+                      (code-error c "Malformed nested quasiquote"))
+                    (cons (qqlist (code-data c) (+ depth 1))
+                          (qqlist (cdr src) depth)))
+
+                   ;; unquote
+                   ((eq (code-data (code-car c)) uq)
+                    (unless (length= (code-data c) 2)
+                      (code-error c "Malformed unquote"))
+                    (if (= depth 1)
+                        (cons (eval-code (code-cadr c) env interpreter)
+                              (qqlist (cdr src) depth))
+                        (cons (qqlist (code-data c) (- depth 1))
+                              (qqlist (cdr src) depth))))
+
+                   ;; unquote-splice
+                   ((eq (code-data (code-car c)) us)
+                    (unless (length= (code-data c) 2)
+                      (code-error c "Malformed unquote-splice"))
+                    (if (= depth 1)
+                        (fnappend (eval-code (code-cadr c) env interpreter)
+                                  (qqlist (cdr src) depth))
+                        (cons (qqlist (code-data c) (- depth 1))
+                              (qqlist (cdr src) depth))))
+
+                   ;; nested lists
+                   (t (cons (qqlist (code-data c) depth)
+                            (qqlist (cdr src) depth)))))))
+      (if (code-list? code)
+          (qqlist (code-data code) 1)
+          (code->fnvalue code)))))
+
+
+(def-op "apply" (f & arg-exprs)
+  (when (null arg-exprs)
+    (runtime-error "Not enough arguments for apply"))
+  (let ((fun (eval-code f env interpreter))
+        (args (mapcar $(eval-code $ env interpreter) arg-exprs)))
+    (unless (fnlist? (car (last args)))
+      (runtime-error "apply: last argument must be a list"))
+    (let ((arg-list (reduce #'cons args :from-end t)))
+      (rplacd (last arg-list) nil)
+      (call-fun fun arg-list interpreter))))
+
+(def-op "do" (expr0 & body)
+  (eval-body (cons expr0 body) env interpreter))
+
+(defun validate-let-bindings (c)
+  (unless (code-list? c)
+    (code-error c "let bindings must be a list"))
+  (unless (evenp (length (code-data c)))
+    (code-error c "odd number of items in let binding list"))
+  (let ((pairs (group 2 (code-data c))))
+    (unless (every $(code-sym? (car $)) pairs)
+      (code-error c "let vars must be symbols"))))
+
+(def-op "let" ((bindings #'validate-let-bindings) & body)
+  (let* ((binding-pairs (group 2 (code-data bindings)))
+         (new-env (init-env (mapcar $(code-data (car $))
+                                    binding-pairs)
+                            env)))
+    (mapc $(set-var (code-data (car $))
+                    (eval-code (cadr $) new-env interpreter)
+                    new-env
+                    interpreter)
+          binding-pairs)
+    (eval-body body new-env interpreter)))

@@ -35,14 +35,14 @@
       (sb-ext:exit :code -1))
     (if (cdr args)
         (with-open-file (in (cadr args) :direction :input) 
-          (mapcar $(fnprintln (eval-ast $))
+          (mapcar(eval-ast $)
                   (parse (scan in))))
         (loop (handler-case
                   (progn
                     (princ "> ")
                     (finish-output)
 
-                    (mapcar $(fnprintln (eval-ast $))
+                    (mapcar $(fnprintln-code (eval-ast $))
                             (parse (scan-from-string (read-line)))))
 
                 ;; exit on SIGINT

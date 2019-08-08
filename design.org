@@ -136,11 +136,52 @@ written using dollar-sign syntax. The expression ~$(function-body)~ expands to ~
 
 #+END_SRC
 
+*** Wildcard parameters
+
+Positional parameters using the wildcard symbol "_" are treated specially. Such parameters do not
+cause any variables to be bound in the function body, i.e. the argument in the corresponding
+position is ignored. These may also be used as optional arguments, although a dummy default value
+must still be provided, e.g. ~(_ null)~
+
+
 *** Variadic arguments and keywords
 
 When a function accepts both keywords and variadic arguments, all the variadic arguments must be
-alternating symbol and value pairs, just like normal keyword arguments. This behavior is virtually
-identical to the behavior of ~&ALLOW-OTHER-KEYS~ in Common Lisp.
+alternating symbol and value pairs, just like normal keyword arguments. This behavior is very
+similar to the behavior of combining ~&REST~ and ~&ALLOW-OTHER-KEYS~ in Common Lisp. The one difference
+is that the property list bound to the variadic argument will not contain any of the explicitly
+specified keyword parameters. That is:
+
+#+BEGIN_SRC fn
+(def (fun 'key1 & other-keys)
+  other-keys)
+
+;; other-keys will not contain the value for 'key1
+(fun 'key1 4 'key2 6 'key3 8)
+;; => ('key2 6 'key3 8)
+
+#+END_SRC
+
+Functions which accept both variadic arguments and keywords have argument checking done to make that
+the keyword arguments form a plist. To get argument checking without having any explicit keyword
+arguments, include "'_" (quote underscore) in the parameter list.
+
+#+BEGIN_SRC fn
+;; this function accepts any arguments
+(def (fun1 & args)
+  args)
+;; so this is fine
+(fun1 'key 2 3.14159 "hello" 'key2)
+
+;; this function only accepts arguments that form a proper plist
+(def (fun2 '_ & args)
+  args)
+;; this is an error
+(fun2 'key 2 3.14159 "hello" 'key2)
+;; but this is fine
+(fun2 'key 2 'key2 "hello")
+
+#+END_SRC
 
 
 * Type System
@@ -237,6 +278,7 @@ parameters. One layer is added for each dispatch parameter.
 In the future, dispatch behavior will likely become more complicated, as features like or, satisfies,
 and wildcard types are added.
 
+
 ** Built-in types
 
 The following types are built into fn.
@@ -264,6 +306,7 @@ of obj. I.e., ~(type-of obj)~ is equivalent to ~(get (class-of obj) 'name)~.
 
 The slots of an object can be accessed using ~get~.
 
+
 * Version 0 Spec
 
 If anyone other than me ever tries to read this, I'm sorry. This is a "complete" specification of
@@ -277,17 +320,13 @@ This sample code contains every special form in fn.
 #+BEGIN_SRC fn
 ;; variable definition
 (def var value)
-(def (fun-var arg*) body*)
+(def (fun param*) body*)
+(def ((method dispatch-types) param*) body*)
 (defvar var value)
 
 ;; type system
-(deftype (Type arg*))
-(defproto (Proto-Name type-var*)
-  (function-name arg*)
-  (function-name arg*))
-(defimpl (Proto-Name types)
-  function-name function
-  function-name function)
+(defclass (Type arg*))
+(defmethod ((method-name type-var*) param*))
 
 ;; get/set
 (get obj field)

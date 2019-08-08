@@ -25,7 +25,7 @@
    :sym :sym? :sym-id :sym-name :sym-name-is?
    :symtab :by-name :by-id :symtab-intern
    ;; sequences
-   :fnlist :fnlist? :fnlist->list :fnmapcar :fnmapcan :fnstring :string? :table :table?
+   :fnlist :fnlist? :fnlist->list :fnappend :fnmapcar :fnmapcan :fnstring :string? :table :table?
    ;; functions and local environments
    :cell :make-cell :cell-value :value :cell-mutable :mutable
    :init-env :env-get :env-add
@@ -36,7 +36,7 @@
    :fnobj :type :contents :make-fnobj :fnobj?
    :fnmethod :make-fnmethod :fnmethod?
    ;; pretty printing
-   :->string :fnprint :fnprintln
+   :->string :fnprint :fnprintln :->code-string :fnprint-code :fnprintln-code
    ;; quoting
    ;;:bracket-sym-name :dollar-sym-name :dot-sym-name :quot-sym-name
    :ast->fnval :fnval->ast))
@@ -120,6 +120,10 @@
 (defun fnlist->list (x)
   (let ((res (copy-list x)))
     (rplacd (last res) nil)
+    res))
+(defun fnappend (lst0 lst1)
+  (let ((res (copy-list lst0)))
+    (rplacd (last res) lst1)
     res))
 (defun fnmapcar (fun x)
   (loop
@@ -216,22 +220,34 @@
 
 ;;;; pretty printing
 
+(defun ->code-string (x)
+  "Print objects as expressions"
+  (cond
+    ((empty? x) "[]")
+    ((fnnull? x) "null")
+    ((true? x) "true")
+    ((false? x) "false")
+    ((num? x) (princ-to-string x))
+    ((fnlist? x)
+     (format nil "[~{~a~^ ~}]" (fnmapcar #'->code-string x)))
+    ((string? x) (concatenate 'string "\"" x "\""))
+    ((sym? x) (concatenate 'string
+                           "'"
+                           (slot-value x 'name)))
+    ((fnfun? x) "#<FUNCTION>")))
+
 (defun ->string (x)
   "Convert an fn object to a string."
   (cond
     ((empty? x) "[]")
-    ((fnnull? x) "Null")
-    ((true? x) "True")
-    ((false? x) "False")
+    ((fnnull? x) "null")
+    ((true? x) "true")
+    ((false? x) "false")
     ((num? x) (princ-to-string x))
     ((fnlist? x)
      (format nil "[~{~a~^ ~}]" (fnmapcar #'->string x)))
     ((string? x) x)
     ((sym? x) (slot-value x 'name))
-    ((fnobj? x) (format nil
-                        "(~a ~{~a~^ ~})"
-                        (fntype-name (fnobj-type x))
-                        (mapcar #'->string (fnobj-contents x))))
     ((fnfun? x) "#<FUNCTION>")))
 
 (defun fnprint (x &optional (stream *standard-output*))
@@ -240,3 +256,8 @@
   (fnprint x stream)
   (terpri stream))
 
+(defun fnprint-code (x &optional (stream *standard-output*))
+  (princ (->code-string x) stream))
+(defun fnprintln-code (x &optional (stream *standard-output*))
+  (fnprint-code x stream)
+  (terpri stream))
