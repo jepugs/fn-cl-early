@@ -80,27 +80,26 @@
       (missing-unary -> (@quote / @quasiquot / @unquot / @unquot-splice)
        (@right-paren / @right-brace / @right-bracket / @eof)))))
 
-(eval-when
-    (:compile-toplevel :load-toplevel)
+(eval-when (:compile-toplevel :load-toplevel :execute)
   (defparameter fn-grammar-callbacks
     '((program $(butlast $))
       (expr #'car)
 
-      (string $(ast-string (token-line (car $)) (token-datum (car $))))
-      (number $(ast-number (token-line (car $)) (token-datum (car $))))
+      (string $(ast-string (token-origin (car $)) (token-datum (car $))))
+      (number $(ast-number (token-origin (car $)) (token-datum (car $))))
 
       (group #'car)
-      (paren $(ast-paren (token-line (car (last $))) (butlast (cdr $))))
-      (bracket $(ast-bracket (token-line (car (last $))) (butlast (cdr $))))
-      (brace $(ast-brace (token-line (car (last $))) (butlast (cdr $))))
+      (paren $(ast-paren (token-origin (car (last $))) (butlast (cdr $))))
+      (bracket $(ast-bracket (token-origin (car (last $))) (butlast (cdr $))))
+      (brace $(ast-brace (token-origin (car (last $))) (butlast (cdr $))))
 
       (unary #'car)
-      (quot $(ast-quot (slot-value (cadr $) 'line) (cadr $)))
-      (quasiquot $(ast-quasiquot (slot-value (cadr $) 'line) (cadr $)))
-      (unquot $(ast-unquot (slot-value (cadr $) 'line) (cadr $)))
-      (unquot-splice $(ast-unquot-splice (slot-value (cadr $) 'line) (cadr $)))
+      (quot $(ast-quot (slot-value (cadr $) 'origin) (cadr $)))
+      (quasiquot $(ast-quasiquot (slot-value (cadr $) 'origin) (cadr $)))
+      (unquot $(ast-unquot (slot-value (cadr $) 'origin) (cadr $)))
+      (unquot-splice $(ast-unquot-splice (slot-value (cadr $) 'origin) (cadr $)))
 
-      (dollar $(let ((l (token-line (car (last $)))))
+      (dollar $(let ((l (token-origin (car (last $)))))
                  (ast-dollar
                   l
                   (case (token-kind (car $))
@@ -109,34 +108,30 @@
                     ((dollar-brace) (ast-brace l (butlast (cdr $))))
                     ((dollar-backtick) (ast-quasiquot l (cadr $)))))))
 
-      (dot $(ast-dot (slot-value (cadr $) 'line) (car $) (cadr $)))
+      (dot $(ast-dot (slot-value (cadr $) 'origin) (car $) (cadr $)))
       (dot-part #'car)
-      (sym $(ast-sym (token-line (car $)) (token-text (car $))))
+      (sym $(ast-sym (token-origin (car $)) (token-text (car $))))
 
       (mismatch $(let ((op (car $))
                        (cl (car (last $))))
-                   (fn-error "FN.PARSER"
-                             (format nil
-                                     "mismatched delimiter ~s. Opening delimiter ~s on line ~a "
-                                     (token-text cl)
-                                     (token-text op)
-                                     (token-line op))
-                             (token-line cl))))
-      (unclosed $(fn-error "FN.PARSER"
-                  (format nil
-                          "unclosed delimiter. Opening delimiter ~s on line ~a"
-                          (token-text (car $))
-                          (token-line (car $)))
-                  (slot-value (car (last $)) 'line)))
-      (illegal-dot $(fn-error "FN.PARSER"
-                     "dot operator can only be used with symbols"
-                     (slot-value (cadr $) 'line)))
-      (dot-syntax $(fn-error "FN.PARSER"
-                    "illegal dot syntax"
-                    (slot-value (cadr $) 'line)))
-      (missing-unary $(fn-error "FN.PARSER"
-                       (format nil "missing operand for ~s" (token-text (car $)))
-                       (slot-value (cadr $) 'line))))))
+                   (fn-error (token-origin cl)
+                             "mismatched delimiter ~s (opening delimiter ~s at line ~a, col ~a)"
+                             (token-text cl)
+                             (token-text op)
+                             (origin-line (token-origin op))
+                             (origin-column (token-origin (car $))))))
+      (unclosed $(fn-error (slot-value (car (last $)) 'origin)
+                           "unclosed delimiter (opening delimiter ~s at line ~a, col ~a)"
+                           (token-text (car $))
+                           (origin-line (token-origin (car $)))
+                           (origin-column (token-origin (car $)))))
+      (illegal-dot $(fn-error (slot-value (cadr $) 'origin)
+                     "dot operator can only be used with symbols"))
+      (dot-syntax $(fn-error (slot-value (cadr $) 'origin)
+                             "illegal dot syntax"))
+      (missing-unary $(fn-error (slot-value (cadr $) 'origin)
+                                "missing operand for ~a"
+                                (token-text (car $)))))))
 
 (defmacro make-fn-parser-state (str)
   `(make-parser (coerce (scan-from-string ,str) 'list)

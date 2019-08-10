@@ -17,121 +17,10 @@
 
 (defpackage :fn.eval
   (:documentation "expression evaluator")
-  (:use :cl :fn.util :fn.ast :fn.values)
+  (:use :cl :fn.util :fn.ast :fn.values :fn.code)
   (:export :eval-ast :eval-code))
 
 (in-package :fn.eval)
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-;;;; code intermediate representation
-
-;;; ASTs are converted to code objects before evaluation.
-
-;;; - numbers and strings are converted to fn values
-;;; - symbols are interned
-;;; - brackets, dots, quotes, etc are expanded into homoiconic command form
-
-;;; symbol names used during syntax tree expansion
-(defconstant-1 bracket-sym-name "List")
-(defconstant-1 brace-sym-name "Table")
-(defconstant-1 dollar-sym-name "dollar-fn")
-(defconstant-1 dot-sym-name "@")
-(defconstant-1 quot-sym-name "quote")
-(defconstant-1 quasiquot-sym-name "quasiquote")
-(defconstant-1 unquot-sym-name "unquote")
-(defconstant-1 unquot-splice-sym-name "unquote-splice")
-(defconstant-1 true-sym-name "true")
-(defconstant-1 false-sym-name "false")
-(defconstant-1 null-sym-name "null")
-
-;;; Each Code object retains a reference to the AST object from which it was derived (for error
-;;; handling).
-
-(defstruct (code (:constructor make-code (src data))
-                 (:predicate code?))
-  ;; the AST object that this code was derived from (if any)
-  src
-  ;; the converted ast object. This may be either an fn value or a list.
-  data)
-
-(defun code-intern (src name symtab)
-  "Like SYMTAB-INTERN but wraps the generated symbol in a code object."
-  (make-code src (symtab-intern name symtab)))
-
-(defun ast->code (a symtab)
-  "Converts an AST object to code."
-  (make-code
-   a
-   (cond
-     ((ast-string? a) (fnstring (slot-value a 'value)))
-     ((ast-number? a) (num (slot-value a 'value)))
-
-     ((ast-paren? a)  (mapcar $(ast->code $ symtab)
-                             (slot-value a 'contents)))
-     ((ast-bracket? a) (cons (code-intern a bracket-sym-name symtab)
-                             (mapcar $(ast->code $ symtab)
-                                     (slot-value a 'contents))))
-     ((ast-brace? a) (cons (code-intern a brace-sym-name symtab)
-                           (mapcar $(ast->code $ symtab)
-                                   (slot-value a 'contents))))
-
-     ((ast-quot? a) (list (code-intern a quot-sym-name symtab)
-                          (ast->code (slot-value a 'expr) symtab)))
-     ((ast-quasiquot? a) (list (code-intern a quasiquot-sym-name symtab)
-                          (ast->code (slot-value a 'expr) symtab)))
-     ((ast-unquot? a) (list (code-intern a unquot-sym-name symtab)
-                          (ast->code (slot-value a 'expr) symtab)))
-     ((ast-unquot-splice? a) (list (code-intern a unquot-splice-sym-name symtab)
-                          (ast->code (slot-value a 'expr) symtab)))
-
-     ((ast-dollar? a) (list (code-intern a dollar-sym-name symtab)
-                            (ast->code (slot-value a 'expr) symtab)))
-
-     ((ast-dot? a) (list (code-intern a dot-sym-name symtab)
-                         (ast->code (slot-value a 'left) symtab)
-                         (ast->code (slot-value a 'right) symtab)))
-
-     ((ast-sym? a) (symtab-intern (slot-value a 'name) symtab)))))
-
-(defun code-list? (c)
-  "Tell if a code object contains a list."
-  (listp (code-data c)))
-
-(defun code-sym? (c)
-  (sym? (code-data c)))
-(defun code-sym-name (c)
-  (sym-name (code-data c)))
-(defun code-sym-id (c)
-  (sym-id (code-data c)))
-(defun code-car (c)
-  (car (code-data c)))
-(defun code-cadr (c)
-  (cadr (code-data c)))
-(defun code-cdr (c)
-  (cdr (code-data c)))
-
-(defun code-literal? (c)
-  (with-slots (data) c
-    (or (string? data) (num? data))))
-
-(defun code-op-is (c op-name)
-  "Check whether C has a certain symbol in its operator position. Assumes C contains a list."
-  (with-slots (data) c
-    (and (code-sym? (car data))
-         (string= (code-sym-name (car data)) op-name))))
-
-(defun code->fnvalue (c)
-  (with-slots (data) c
-    (if (listp data)
-        (apply #'fnlist (mapcar #'code->fnvalue data))
-        data)))
-
-(eval-when (:load-toplevel :compile-toplevel :execute)
-  (defmacro code-error (c format-string &rest format-args)
-    `(fn-error ,(package-name *package*)
-               (format nil ,format-string ,@format-args)
-               (slot-value (slot-value ,c 'src) 'line))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -142,11 +31,13 @@
   (define-condition runtime-error (error)
     ((message :initarg :message)))
 
-  (defmacro handling-runtime-errors (code-object &body body)
-    "Converts runtime errors to code errors"
-    `(handler-case (progn ,@body)
-       (runtime-error (x)
-         (code-error ,code-object (slot-value x 'message)))))
+  (defmacro handling-runtime-errors (code &body body)
+    "Converts runtime errors to fn errors"
+    (with-gensyms (x)
+      `(handler-case (progn ,@body)
+         (runtime-error (,x)
+           (fn-error (code-origin ,code)
+                     (slot-value ,x 'message))))))
 
   (defmacro runtime-error (format-string &rest format-args)
     `(error 'runtime-error
@@ -165,11 +56,11 @@
 
   (defparameter builtin-globals nil)
 
-  (defmacro def-op (name arg-specs &body body)
+  (defmacro def-op (name params &body body)
     "DEF-OP defines a special operator in fn by adding it to SPECIAL-OP-DISPATCH.
 
  NAME       : a string denoting the operator's name
- ARG-SPECS  : a list describing the operator's arguments (see below)
+ PARAMS     : common lisp lambda list describing arguments
  BODY       : function body describing the operator's behavior
 
  All the names in the ARG-SPECs list are bound to corresponding arguments for use in the function
@@ -179,53 +70,9 @@
       (cons ,name
             (lambda (c env interpreter)
               (declare (ignorable c env interpreter))
-              (let ,(arg-spec-vars arg-specs)
-                ,(arg-binders 'c arg-specs name)
+              (destructuring-bind ,params (code-cdr c)
                 ,@body)))
       special-op-dispatch))
-
-  (defun arg-spec-vars (arg-specs)
-    "Get a list of variables bound by def-op arg-specs"
-    (reduce $(cond ((listp $1) (cons (car $1) $0))
-                   ((eq $1 '&) $0)
-                   (t (cons $1 $0)))
-            arg-specs
-            :initial-value nil))
-
-  (defun arg-binders (code arg-specs op-name)
-    "Based upon arg-specs, generate code to do argument validation and binding for def-op"
-    (with-gensyms (x)
-      `(let ((,x (cdr (code-data ,code))))
-         ,@(rlambda (acc specs) (nil arg-specs)
-             (cond
-               ((null specs)
-                `(,@(nreverse acc)
-                  (unless (null ,x)
-                    (code-error ,code "Too many arguments for ~a" ,op-name))))
-               ((eq (car specs) '&)
-                `(,@(nreverse acc)
-                  ,(if (listp (cadr specs))
-                       `(progn (funcall ,(cadadr specs) ,x)
-                               (setq ,(caadr specs) ,x))
-                       `(setq ,(cadr specs) ,x))))
-               ((symbolp (car specs))
-                (recur
-                 `((if (null ,x)
-                       (code-error ,code "Not enough arguments for ~a" ,op-name)
-                       (progn (setq ,(car specs) (car ,x))
-                              (setq ,x (cdr ,x))))
-                   ,@acc)
-                 (cdr specs)))
-               ((listp (car specs))
-                (recur
-                 `((if (null ,x)
-                       (code-error ,code "Not enough arguments for ~a" ,op-name)
-                       (progn
-                         (funcall ,(cadar specs) (car ,x))
-                         (setq ,(caar specs) (car ,x))
-                         (setq ,x (cdr ,x))))
-                   ,@acc)
-                 (cdr specs))))))))
 
   (defmacro defun-builtin (name args-var &body body)
     "Define a builtin function and add it to the list"
@@ -313,9 +160,10 @@
                    "invalid code object passed to EVAL-CODE")))))
 
 (defun eval-ast (a &optional (env (init-env nil)) (interpreter *global-interpreter*))
-  "Evaluate an AST object."
-  (with-slots (symtab) interpreter
-    (eval-code (ast->code a symtab) env interpreter)))
+  "Convert an AST object to code, check it syntax errors, and evaluate it."
+  (let ((code (ast->code a (interpreter-symtab interpreter))))
+    (validate-code code)
+    (eval-code code env interpreter)))
 
 (defun find-cell (sym env interpreter)
   "Find a value cell corresponding to a symbol."
@@ -434,40 +282,22 @@
 
 ;;;; special operators
 
-(defun fn-quoted? (c)
-  (and (code-list? c)
-       (code-sym? (car (code-data c)))
-       (string= (code-sym-name (car (code-data c)))
-                quot-sym-name)))
-
-(defun validate-def-name (c)
-  (unless (or (code-sym? c)
-              (and (code-list? c)
-                   (code-sym? (car (code-data c)))))
-    (code-error c "Illegal name in definition")))
-
-(defun validate-def-value (lst)
-  (unless lst
-    (runtime-error "Missing value in definition")))
-
-;; TODO: right now, new definitions clobber old ones. This behavior is useful for testing, but not
-;; dangerous in practice, so it should at least emit a warning.
-(def-op "def" ((name #'validate-def-name) & (value-or-body #'validate-def-value))
+;; TODO: right now, new definitions silently clobber old ones. This behavior is useful for testing,
+;; but not dangerous in practice, so it should at least emit a warning.
+(def-op "def" (name &rest value-or-body)
   (if (code-list? name)
       (eval-function-def (code-data name)
                          value-or-body
                          env
                          interpreter)
-      (if (length= value-or-body 1)
-          (let ((v (eval-code (car value-or-body))))
-            (env-add (slot-value interpreter 'globals)
-                     (code-data name)
-                     (make-cell :value v :mutable nil))
-            v)
-          (code-error c "Too many arguments in def expression"))))
+      (let ((v (eval-code (car value-or-body))))
+        (env-add (slot-value interpreter 'globals)
+                 (code-data name)
+                 (make-cell :value v :mutable nil))
+        v)))
 
 
-(def-op "defvar" ((name #'validate-def-name) & (value-or-body #'validate-def-value))
+(def-op "defvar" (name &rest value-or-body)
   (if (code-list? name)
       (eval-function-def (code-data name)
                          value-or-body
@@ -490,10 +320,6 @@
             (make-cell :value fun))
    fun))
 
-(defun validate-set-place (c)
-  (unless (code-sym? c)
-    (code-error c "Illegal place in set expression")))
-
 (defun set-var (name value env interpreter)
   (let ((cell (find-cell name env interpreter)))
     (cond
@@ -507,13 +333,13 @@
       (t (cell-mutable cell)
          (setf (cell-value cell) value)))))
 
-(def-op "set" ((place #'validate-set-place) value)
+(def-op "set" (place value)
   (cond
     ((code-sym? place) (set-var (code-data place)
                                 (eval-code value env interpreter)
                                 env
                                 interpreter))
-    (t (code-error c "Unrecognized set place"))))
+    (t (runtime-error c "Unrecognized set place"))))
 
 (defun code-quoted-sym? (c)
   (with-slots (data) c
@@ -521,59 +347,6 @@
          (length= data 2)
          (every #'code-sym? data)
          (string= quot-sym-name (code-sym-name (car data))))))
-
-;; TODO: check for duplicate param names
-(defun validate-params (c)
-  (labels ((check-params (lst key opt)
-             (if lst
-                 (let ((p (car lst)))
-                   (cond
-                     ;; & starts variadic argument
-                     ((and (code-sym? p)
-                           (string= (code-sym-name p) "&"))
-                      (check-vari-param lst))
-
-                     ;; required positional argument
-                     ((code-sym? p)
-                      (when opt
-                        (code-error
-                         c
-                         "Required positionals parameters can't come after optional parameters"))
-                      (when key
-                        (code-error
-                         c
-                         "Non-keyword parameters cannot follow keyword parameters"))
-                      (check-params (cdr lst) nil nil))
-
-                     ;; required keyword argument
-                     ((code-quoted-sym? p)
-                      (when opt
-                        (code-error
-                         c
-                         "Required keyword parameters cannot follow optional parameters"))
-                      (check-params (cdr lst) t nil))
-
-                     ;; optional arguments
-                     ((and (code-list? p)
-                           (length= (code-data p) 2))
-                      (let ((name (code-car p)))
-                        (if (code-quoted-sym? name)
-                            (check-params (cdr lst) t t)
-                            (if key
-                                (code-error
-                                 c
-                                 "Non-keyword parameters cannot follow keyword parameters")
-                                (check-params (cdr lst) nil t)))))
-
-                     (t (code-error c "Malformed parameter"))))))
-           ;; check variadic parameter
-           (check-vari-param (lst)
-             (unless (length= lst 2)
-               (code-error c "Too many parameters after &"))
-             (unless (code-sym? (cadr lst))
-               (code-error c "Malformed variadic parameter"))))
-    (and (code-list? c)
-         (check-params (code-data c) nil nil))))
 
 (defun code->param-list (lst)
   "Takes a list of code objects and generates a param-list"
@@ -608,7 +381,7 @@
                                       keyword)
                      :vari vari)))
 
-(def-op "fn" ((params #'validate-params) & body)
+(def-op "fn" (params &rest body)
   (make-fnfun :params (code->param-list (code-data params))
               :body body
               :closure env))
@@ -628,13 +401,7 @@
         (eval-code else env interpreter)
         (eval-code then env interpreter))))
 
-(defun validate-cond-body (body)
-  (when (null body)
-    (runtime-error "empty cond body"))
-  (unless (evenp (length body))
-    (runtime-error "cond body has odd length")))
-
-(def-op "cond" (& (body #'validate-cond-body))
+(def-op "cond" (&rest body)
   (let ((clauses (group 2 body)))
     (rlambda (src) (clauses)
       (when (null src)
@@ -652,9 +419,11 @@
   (eval-quasiquote code env interpreter))
 
 (def-op "unquote" (code)
+  (declare (ignore code))
   (runtime-error "unquote outside of quasiquote"))
 
 (def-op "unquote-splice" (code)
+  (declare (ignore code))
   (runtime-error "unquote-splice outside of quasiquote"))
 
 ;; TODO: add syntax checking for nested quaisquote, unquote, and unquote splicing (that is, check
@@ -664,55 +433,67 @@
         (uq (fnintern unquot-sym-name interpreter))
         (us (fnintern unquot-splice-sym-name interpreter)))
     ;; depth is the number of nested quasiquotes
-    (labels ((qqlist (src depth)
-               (let ((c (car src)))
-                 (cond
-                   ;; empty list
-                   ((null src) empty)
+    ;; TODO: rewrite so that src is a code object
+    (labels ((us-form? (c)
+               ;; Tell if c is an unquote-splice form
+               (and (code-list? c)
+                    (not (null (code-data c)))
+                    (code-sym? (code-car c))
+                    (eq (code-data (code-car c)) us)))
+             (qqlist (lst level)
+               (reduce $(if (us-form? $0)
+                            (if (= level 1)
+                                (fnappend (eval-code (code-cadr $0)
+                                                     env
+                                                     interpreter)
+                                          $1)
+                                (cons (qqtree $0 (+ level 1)) $1))
+                            (cons (qqtree $0 level) $1))
+                       lst
+                       :from-end t
+                       :initial-value empty))
+             (qqtree (c level)
+               (cond
+                 ;; atoms
+                 ((not (code-list? c))
+                  (code->fnvalue c))
 
-                   ;; atoms
-                   ((not (code-list? c))
-                    (cons (code->fnvalue c)
-                          (qqlist (cdr src) depth)))
+                 ;; empty list
+                 ((null (code-data c)) empty)
 
-                   ;; nested quasiquote
-                   ((eq (code-data (code-car c)) qq)
-                    (unless (length= (code-data c) 2)
-                      (code-error c "Malformed nested quasiquote"))
-                    (cons (qqlist (code-data c) (+ depth 1))
-                          (qqlist (cdr src) depth)))
+                 ((code-sym? (code-car c))
+                  (let ((op (code-data (code-car c))))
+                    (cond
+                      ;; nested quasiquote
+                      ((and (eq op qq)
+                            (length= (code-data c) 2))
+                       (qqlist (code-data c) (+ level 1)) )
 
-                   ;; unquote
-                   ((eq (code-data (code-car c)) uq)
-                    (unless (length= (code-data c) 2)
-                      (code-error c "Malformed unquote"))
-                    (if (= depth 1)
-                        (cons (eval-code (code-cadr c) env interpreter)
-                              (qqlist (cdr src) depth))
-                        (cons (qqlist (code-data c) (- depth 1))
-                              (qqlist (cdr src) depth))))
+                      ;; unquote
+                      ((and (eq op uq)
+                            (length= (code-data c) 2))
+                       (if (= level 1)
+                           (eval-code (code-cadr c) env interpreter)
+                           (qqlist (code-data c) (- level 1))))
 
-                   ;; unquote-splice
-                   ((eq (code-data (code-car c)) us)
-                    (unless (length= (code-data c) 2)
-                      (code-error c "Malformed unquote-splice"))
-                    (if (= depth 1)
-                        (fnappend (eval-code (code-cadr c) env interpreter)
-                                  (qqlist (cdr src) depth))
-                        (cons (qqlist (code-data c) (- depth 1))
-                              (qqlist (cdr src) depth))))
+                      ;; if we find unquote-splice here, it means the list is malformed
+                      ((and (eq op us)
+                            (length= (code-data c) 2))
+                       (if (= level 1)
+                           (runtime-error "illegal unquote-splice in quasiquote")
+                           (qqlist (code-data c) (- level 1))))
 
-                   ;; nested lists
-                   (t (cons (qqlist (code-data c) depth)
-                            (qqlist (cdr src) depth)))))))
+                      ;; nested lists
+                      (t
+                       (qqlist (code-data c) level)))))
+                 ;; nested lists
+                 (t (qqlist (code-data c) level)))))
       (if (code-list? code)
-          (qqlist (code-data code) 1)
+          (qqtree code 1)
           (code->fnvalue code)))))
 
 
-(def-op "apply" (f & arg-exprs)
-  (when (null arg-exprs)
-    (runtime-error "Not enough arguments for apply"))
+(def-op "apply" (f &rest arg-exprs)
   (let ((fun (eval-code f env interpreter))
         (args (mapcar $(eval-code $ env interpreter) arg-exprs)))
     (unless (fnlist? (car (last args)))
@@ -721,19 +502,10 @@
       (rplacd (last arg-list) nil)
       (call-fun fun arg-list interpreter))))
 
-(def-op "do" (expr0 & body)
+(def-op "do" (expr0 &rest body)
   (eval-body (cons expr0 body) env interpreter))
 
-(defun validate-let-bindings (c)
-  (unless (code-list? c)
-    (code-error c "let bindings must be a list"))
-  (unless (evenp (length (code-data c)))
-    (code-error c "odd number of items in let binding list"))
-  (let ((pairs (group 2 (code-data c))))
-    (unless (every $(code-sym? (car $)) pairs)
-      (code-error c "let vars must be symbols"))))
-
-(def-op "let" ((bindings #'validate-let-bindings) & body)
+(def-op "let" (bindings &rest body)
   (let* ((binding-pairs (group 2 (code-data bindings)))
          (new-env (init-env (mapcar $(code-data (car $))
                                     binding-pairs)

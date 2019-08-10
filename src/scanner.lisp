@@ -24,7 +24,7 @@
    :quote :backtick :comma :comma-splice :dot :number :string :symbol :eof :dollar-paren
    :dollar-bracket :dollar-brace :dollar-backtick
    ;; Token structure
-   :token :token-kind :token-line :token-datum :token-text
+   :token :token-kind :token-origin :token-datum :token-text
    ;; Main scanner functions
    :scan :scan-from-string
    ))
@@ -46,7 +46,7 @@
   "Tokens output by the scanner"
   kind
   datum
-  line
+  origin
   text)
 
 (defun fmt-token (tok)
@@ -66,9 +66,17 @@
 
 (defstruct scanner-state
   stream
+  filename
   (line 1)
+  (column 0)
   (cur-tok (make-array 16 :fill-pointer 0 :adjustable t))
-  (tokens (make-array 16 :fill-pointer 0 :adjustable t))) 
+  (tokens (make-array 16 :fill-pointer 0 :adjustable t)))
+
+(defun scanner-origin (ss)
+  (with-slots (filename line column) ss
+    (make-origin :filename filename
+                 :line line
+                 :column column)))
 
 
 (defun consume (ss)
@@ -78,7 +86,9 @@
     ;; don't add to the token if this is EOF
     (unless (eq c :eof)
       (if (eql c #\newline)
-          (incf (scanner-state-line ss)))
+          (progn (incf (scanner-state-line ss))
+                 (setf (scanner-state-column ss) 0))
+          (incf (scanner-state-column ss)))
       (vector-push-extend c (scanner-state-cur-tok ss)))
     c))
 
@@ -86,7 +96,9 @@
   "Advance the reader head without adding the character to the current token."
   (let ((c (read-char (scanner-state-stream ss))))
     (if (eql c #\newline)
-        (incf (scanner-state-line ss)))
+          (progn (incf (scanner-state-line ss))
+                 (setf (scanner-state-column ss) 0))
+          (incf (scanner-state-column ss)))
     c))
 
 (defun peek (ss)
@@ -100,10 +112,10 @@
 
 (defun add-token (ss kind &optional datum)
   "Add the current token to the end of the stream."
-  (with-slots (line cur-tok tokens) ss
+  (with-slots (cur-tok tokens) ss
     (vector-push-extend (make-token :kind kind
                                     :datum datum
-                                    :line line
+                                    :origin (scanner-origin ss)
                                     :text (coerce cur-tok 'string))
                         tokens)
     (setf (fill-pointer cur-tok) 0)))
@@ -212,9 +224,9 @@
       ((#\0) #\nul)
 
       ;; for now, we'll forget about the fancy octal and hexadecimal escape codes
-      (t (fn-error "FN.SCANNER"
-                   (format nil "unrecognized string escape code: \"\\~s\"" c)
-                   (scanner-state-line ss))))))
+      (t (fn-error (scanner-origin ss)
+                   "unrecognized string escape code: \"\\~s\""
+                   c)))))
 
 (defun scan-string-literal (ss)
   "Scan a string literal."
@@ -224,9 +236,8 @@
     (let ((c (peek ss)))
       (cond
         ;; emit an error if the stream ends before the string is finished
-        ((at-eof? ss) (fn-error "FN.SCANNER"
-                                "reached EOF while scanning string"
-                                (scanner-state-line ss)))
+        ((at-eof? ss) (fn-error (scanner-origin ss)
+                                "reached EOF while scanning string"))
 
         ;; when we're escaped, we dispatch to the scan-escape-code helper
         (escaped?
@@ -285,9 +296,8 @@
              (cond
                ((eql c #\.)
                 (if point?
-                    (fn-error "FN.SCANNER"
-                              "Ambiguous combination of dots and numbers"
-                              (scanner-state-line ss))
+                    (fn-error (scanner-origin ss)
+                              "Ambiguous combination of dots and numbers")
                     (progn (consume ss)
                            (recur int-acc frac-acc t))))
 
@@ -300,9 +310,8 @@
                ;; throw everything out; we're reading a symbol
                ((symbol-char? c)
                 (if point?
-                    (fn-error "FN.SCANNER"
-                              "Ambiguous combination of dots and numbers"
-                              (scanner-state-line ss))
+                    (fn-error (scanner-origin ss)
+                              "Ambiguous combination of dots and numbers")
                     nil))
 
                ;; done reading I guess. Return integer and fractional parts as lists of characters
@@ -349,9 +358,8 @@
           (rlambda (acc escaped? i) (nil nil 0)
             (if (>= i (length ct))
                 (if escaped?
-                    (fn-error "FN.SCANNER"
-                              "symbol name cannot end with \\"
-                              (scanner-state-line ss))
+                    (fn-error (scanner-origin ss)
+                              "symbol name cannot end with \\")
                     (coerce (nreverse acc) 'string))
                 (let ((c (aref ct i)))
                   (cond
@@ -360,9 +368,10 @@
                     (t (recur (cons c acc) nil (1+ i)))))))))
     (add-token ss 'symbol name)))
 
-(defun scan (stream)
+(defun scan (stream &optional filename)
   "Scan the stream until eof is encountered."
-  (let ((ss (make-scanner-state :stream stream)))
+  (let ((ss (make-scanner-state :stream stream
+                                :filename filename)))
     (loop until (at-eof? ss)
        do (scan-token ss))
     (add-token ss 'eof)

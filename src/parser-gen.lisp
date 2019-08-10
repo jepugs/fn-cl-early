@@ -18,7 +18,6 @@
 (defpackage :fn.parser-gen
   (:documentation "parser generator for fn")
   (:use :cl :fn.util :fn.scanner :fn.ast)
-  (:import-from :fn.scanner :line)
   (:export :defparser :make-parser :/ :-> :kind :line :program))
 
 (in-package :fn.parser-gen)
@@ -284,9 +283,8 @@ containing the size of the largest match and the callback for the corresponding 
                (eq (slot-value (car stack) 'nonterminal) 'program))
     (let ((err-elt (find-if-not $(eq (slot-value $ 'nonterminal) 'expr)
                                 stack :from-end t)))
-      (fn-error "FN.PARSER"
-                "parsing failed due to incomplete expression"
-                0)))
+      (fn-error (slot-value err-elt 'origin)
+                "parsing failed due to incomplete expression")))
   stack)
 
 (defmacro make-parser (input grammar &body callbacks)

@@ -122,9 +122,11 @@
     (rplacd (last res) nil)
     res))
 (defun fnappend (lst0 lst1)
-  (let ((res (copy-list lst0)))
-    (rplacd (last res) lst1)
-    res))
+  (if (empty? lst0)
+      lst1
+      (let ((res (copy-list lst0)))
+        (rplacd (last res) lst1)
+        res)))
 (defun fnmapcar (fun x)
   (loop
      for src = x then (cdr src)
@@ -204,7 +206,7 @@
 (defstruct (fnclass (:predicate fnclass?) :copier)
   (name nil :type sym :read-only t)
   (fields nil :type list :read-only t)
-  (constructor nil :type list :read-only t))
+  (constructor nil :read-only t))
 
 (defstruct (fnobj (:predicate fnobj?) :copier)
   (class nil :type fnclass :read-only t)
@@ -215,6 +217,7 @@
   (params)
   ;; list of symbols indicating method names
   (dispatch nil :type hash-table :read-only t))
+
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 

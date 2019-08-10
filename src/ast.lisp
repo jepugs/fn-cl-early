@@ -18,8 +18,7 @@
 (defpackage :fn.ast
   (:documentation "AST data structures")
   (:use :cl :fn.util :fn.scanner)
-  (:import-from :fn.scanner :line)
-  (:export :line :value :contents :expr :name :contents :ast-string :ast-number :ast-paren
+  (:export :origin :value :contents :expr :name :contents :ast-string :ast-number :ast-paren
            :ast-bracket :ast-brace :ast-quot :ast-quasiquot :ast-unquot :ast-unquot-splice
            :ast-dollar :ast-dot :ast-sym :ast-string? :ast-number? :ast-paren?
            :ast-bracket? :ast-brace? :ast-quot? :ast-quasiquot? :ast-unquot? :ast-unquot-splice?
@@ -53,18 +52,18 @@
 
 
 (def-ast
-  (string line value)
-  (number line value)
-  (paren line contents)
-  (bracket line contents)
-  (brace line contents)
-  (quot line expr)
-  (quasiquot line expr)
-  (unquot line expr)
-  (unquot-splice line expr)
-  (dollar line expr)
-  (dot line left right)
-  (sym line name))
+  (string origin value)
+  (number origin value)
+  (paren origin contents)
+  (bracket origin contents)
+  (brace origin contents)
+  (quot origin expr)
+  (quasiquot origin expr)
+  (unquot origin expr)
+  (unquot-splice origin expr)
+  (dollar origin expr)
+  (dot origin left right)
+  (sym origin name))
 
 (defgeneric convert-ast (object))
 
@@ -85,9 +84,9 @@
 
 (def-ast-converter ast-string value)
 (def-ast-converter ast-number value)
-(def-ast-converter ast-paren line contents)
-(def-ast-converter ast-bracket line contents)
-(def-ast-converter ast-brace line contents)
+(def-ast-converter ast-paren origin contents)
+(def-ast-converter ast-bracket origin contents)
+(def-ast-converter ast-brace origin contents)
 (def-ast-converter ast-quot expr)
 (def-ast-converter ast-quasiquot expr)
 (def-ast-converter ast-unquot expr)

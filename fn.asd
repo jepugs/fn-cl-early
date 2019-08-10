@@ -18,5 +18,6 @@
                (:file "parser-gen")
                (:file "parser")
                (:file "values")
+               (:file "code")
                (:file "eval")
                (:file "main")))

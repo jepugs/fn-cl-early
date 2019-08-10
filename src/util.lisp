@@ -30,7 +30,8 @@
    ;; misc functionality
    :defconstant-1 :symb :quoted-p :name-eq :macroexpand-all :with-gensyms :xor
    ;; error handling
-   :fn-error))
+   :fn-error :origin :make-origin :origin-filename :origin-line :origin-column :filename
+   :line :column :macro))
 
 (in-package :fn.util)
 
@@ -348,29 +349,51 @@ contents of the table."
 
 ;;;; Error generation
 
+;; origins contain information about where tokens, AST, and/or code objects originated. The MACRO
+;; field is only relevant for code objects, but if provided indicates the name of the macro which
+;; expanded into said code object (in this case, the line and column values will be the same as the
+;; expression which yielded the macroexpansion in the first place).
+(defstruct origin
+  (filename nil)
+  (line nil)
+  (column nil)
+  (macro nil))
+
+(defun origin->string (o)
+  (with-slots (filename line column macro) o
+    (format nil "line ~a, col ~a~@[, file \"~a\"~]~@[, expansion of macro \"~a\"~]"
+            line
+            column
+            filename
+            macro)))
+
 (define-condition fn-error (error)
   ((module :initarg :module
            :type string
            :documentation "The part of the interpreter in which the error occurred.")
-   (place :initarg :place
-          :documentation "Line number where the error occurred.")
+   (origin :initarg :origin
+           :documentation "Place in the code where the problem occurred.")
    (message :initarg :message
             :type string
             :documentation "Message to print")))
 
 (defmethod print-object ((object fn-error) stream)
   (let ((*standard-output* stream))
-    (with-slots (module place message) object
+    (with-slots (module origin message) object
       (princ module)
-      (princ
-       (if place
-           (format nil " error at line ~a:" place)
-           " error:"))
+      (princ " error at ")
+      (princ (origin->string origin))
+      (princ ":")
       (terpri)
       (princ "    ")
       (princ message)
-      (terpri)
       (finish-output))))
 
-(defun fn-error (module message &optional place)
-  (error 'fn-error :module module :place place :message message))
+(defmacro fn-error (origin fmt-string &rest fmt-args)
+  `(error 'fn-error
+          :module ,(package-name *package*)
+          :origin ,origin
+          :message (format nil ,fmt-string ,@fmt-args)))
+
+;; (defun fn-error (module message &optional place)
+;;   (error 'fn-error :module module :place place :message message))
