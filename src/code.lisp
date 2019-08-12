@@ -66,38 +66,39 @@
 
 (defun ast->code (a symtab)
   "Converts an AST object to code."
-  (make-code
-   (slot-value a 'origin)
-   (cond
-     ((ast-string? a) (fnstring (slot-value a 'value)))
-     ((ast-number? a) (num (slot-value a 'value)))
+  (let ((o (slot-value a 'origin)))
+    (make-code
+     o
+     (cond
+       ((ast-string? a) (fnstring (slot-value a 'value)))
+       ((ast-number? a) (num (slot-value a 'value)))
 
-     ((ast-paren? a)  (mapcar $(ast->code $ symtab)
-                             (slot-value a 'contents)))
-     ((ast-bracket? a) (cons (code-intern a bracket-sym-name symtab)
+       ((ast-paren? a)  (mapcar $(ast->code $ symtab)
+                                (slot-value a 'contents)))
+       ((ast-bracket? a) (cons (code-intern o bracket-sym-name symtab)
+                               (mapcar $(ast->code $ symtab)
+                                       (slot-value a 'contents))))
+       ((ast-brace? a) (cons (code-intern o brace-sym-name symtab)
                              (mapcar $(ast->code $ symtab)
                                      (slot-value a 'contents))))
-     ((ast-brace? a) (cons (code-intern a brace-sym-name symtab)
-                           (mapcar $(ast->code $ symtab)
-                                   (slot-value a 'contents))))
 
-     ((ast-quot? a) (list (code-intern a quot-sym-name symtab)
-                          (ast->code (slot-value a 'expr) symtab)))
-     ((ast-quasiquot? a) (list (code-intern a quasiquot-sym-name symtab)
-                          (ast->code (slot-value a 'expr) symtab)))
-     ((ast-unquot? a) (list (code-intern a unquot-sym-name symtab)
-                          (ast->code (slot-value a 'expr) symtab)))
-     ((ast-unquot-splice? a) (list (code-intern a unquot-splice-sym-name symtab)
-                          (ast->code (slot-value a 'expr) symtab)))
-
-     ((ast-dollar? a) (list (code-intern a dollar-sym-name symtab)
+       ((ast-quot? a) (list (code-intern o quot-sym-name symtab)
                             (ast->code (slot-value a 'expr) symtab)))
+       ((ast-quasiquot? a) (list (code-intern o quasiquot-sym-name symtab)
+                                 (ast->code (slot-value a 'expr) symtab)))
+       ((ast-unquot? a) (list (code-intern o unquot-sym-name symtab)
+                              (ast->code (slot-value a 'expr) symtab)))
+       ((ast-unquot-splice? a) (list (code-intern o unquot-splice-sym-name symtab)
+                                     (ast->code (slot-value a 'expr) symtab)))
 
-     ((ast-dot? a) (list (code-intern a dot-sym-name symtab)
-                         (ast->code (slot-value a 'left) symtab)
-                         (ast->code (slot-value a 'right) symtab)))
+       ((ast-dollar? a) (list (code-intern o dollar-sym-name symtab)
+                              (ast->code (slot-value a 'expr) symtab)))
 
-     ((ast-sym? a) (symtab-intern (slot-value a 'name) symtab)))))
+       ((ast-dot? a) (list (code-intern o dot-sym-name symtab)
+                           (ast->code (slot-value a 'left) symtab)
+                           (ast->code (slot-value a 'right) symtab)))
+
+       ((ast-sym? a) (symtab-intern (slot-value a 'name) symtab))))))
 
 (defun code-list? (c)
   "Tell if a code object contains a list."
@@ -259,9 +260,9 @@
     (if (code-list? c)
         (check-params (code-data c) nil nil)
         (code-error c
-                           "~a~a"
-                           prefix
-                           "parameter list must be a list"))))
+                    "~a~a"
+                    prefix
+                    "parameter list must be a list"))))
 
 
 (defun validate-apply (o args)
@@ -293,7 +294,7 @@
        (validate-params (code-cdr place)
                         "in function definition parameters: ")
        (validate-exprs (cdr args)))
-      ;;method definition
+      ;; method definition
       ((and (code-list? place)
             (code-list? (code-car place))
             (code-sym? (code-car (code-car place))))

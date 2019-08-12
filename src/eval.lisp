@@ -36,6 +36,7 @@
     (with-gensyms (x)
       `(handler-case (progn ,@body)
          (runtime-error (,x)
+           (princ ,code)
            (fn-error (code-origin ,code)
                      (slot-value ,x 'message))))))
 
@@ -156,7 +157,7 @@
          ((string= (code-sym-name c) null-sym-name) fnnull)
          (t (eval-var c env interpreter))))
       ((code-list? c) (eval-command c env interpreter))
-      (t (fn-error "FN.EVAL"
+      (t (fn-error (code-origin c)
                    "invalid code object passed to EVAL-CODE")))))
 
 (defun eval-ast (a &optional (env (init-env nil)) (interpreter *global-interpreter*))
@@ -174,7 +175,7 @@
   "Evaluate a variable reference. Assumes CODE contains a symbol"
   (aif (find-cell (code-data c) env interpreter)
        (cell-value it)
-       (code-error c "Unbound symbol: ~a" (code-sym-name c))))
+       (runtime-error "Unbound symbol: ~a" (code-sym-name c))))
 
 (defun eval-command (c env interpreter)
   (let ((op (car (code-data c))))
@@ -185,7 +186,7 @@
                       :test #'equal)
                (funcall (cdr it) c env interpreter)
                (aif (get-macro sym interpreter)
-                    (code-error c "Macros aren't implemented")
+                    (runtime-error "Macros aren't implemented")
                     (eval-funcall c env interpreter))))
         (eval-funcall c env interpreter))))
 
@@ -290,26 +291,19 @@
                          value-or-body
                          env
                          interpreter)
-      (let ((v (eval-code (car value-or-body))))
+      (let ((v (eval-code (car value-or-body) env interpreter)))
         (env-add (slot-value interpreter 'globals)
                  (code-data name)
                  (make-cell :value v :mutable nil))
         v)))
 
 
-(def-op "defvar" (name &rest value-or-body)
-  (if (code-list? name)
-      (eval-function-def (code-data name)
-                         value-or-body
-                         env
-                         interpreter)
-      (if (length= value-or-body 1)
-          (let ((v (eval-code (car value-or-body))))
-            (env-add (slot-value interpreter 'globals)
-                     (code-data name)
-                     (make-cell :value v :mutable t))
-            v)
-          (code-error c "Too many arguments in defvar expression"))))
+(def-op "defvar" (name value)
+  (let ((v (eval-code value env interpreter)))
+    (env-add (slot-value interpreter 'globals)
+             (code-data name)
+             (make-cell :value v :mutable t))
+    v))
 
 (defun eval-function-def (name body env interpreter)
   (let ((fun (make-fnfun :params (code->param-list (cdr name))
@@ -386,13 +380,101 @@
               :body body
               :closure env))
 
-;; (defun find-$-syms (expr)
-;;   (let (())))
+(defun dollar-id-string? (str)
+  ;; we have to ensure there are no superfluous leading 0's b/c then there wouldn't be one unique
+  ;; dollar symbol per natural number
+  (or (string= str "&")
+      (string= str "0")
+      (and (member (aref str 0)
+                   '(#\1 #\2 #\3 #\4 #\5 #\6 #\7 #\8 #\9))
+           (every #'digit-char-p str))))
 
-;; (def-op "dollar-fn" (expr)
-;;   (let* (($-syms (find-$-syms expr))
-;;          (pos (remove-)))
-;;     (make-param-list )))
+(defun is-$-sym? (c)
+  (if (code-sym? c)
+      (let ((name (code-sym-name c)))
+        (and (eql (aref name 0) #\$)
+             (or (string= (subseq name 1) "")
+                 (dollar-id-string? (subseq name 1)))))
+      nil))
+
+(defun find-$-qquote (expr level)
+  "Descend into a quasiquoted expression, finding all unquoted $-syms."
+  (cond
+    ((not (code-list? expr))
+     nil)
+    ((null (code-data expr)) nil)
+    ((code-sym? (code-car expr))
+     (let ((op (code-sym-name (code-car expr))))
+       (cond
+         ((and (string= op quasiquot-sym-name)
+               (length= (code-data expr) 2))
+          (find-$-qquote (code-cadr expr) (+ level 1)))
+         ((and (or (string= op unquot-sym-name)
+                   (string= op unquot-splice-sym-name))
+               (length= (code-data expr) 2))
+          (if (= level 1)
+              (find-$-syms (code-cadr expr))
+              (find-$-qquote (code-cadr expr) (- level 1))))
+         (t (mapcan $(find-$-qquote $ level) (code-data expr))))))
+    (t (mapcan $(find-$-qquote $ level) (code-data expr)))))
+
+(defun find-$-syms (expr)
+  (cond
+    ((not (code-list? expr))
+     (if (is-$-sym? expr)
+         (list (code-data expr))
+         nil))
+
+    ((null (code-data expr)) nil)
+
+    ((code-sym? (code-car expr))
+     (let ((op (code-sym-name (code-car expr))))
+       (cond
+         ((string= op quasiquot-sym-name)
+          (find-$-qquote (code-cadr expr) 1))
+         ((string= op quot-sym-name) nil)
+         ((string= op dollar-sym-name) nil)
+         (t (mapcan #'find-$-syms (code-data expr))))))
+
+    (t (mapcan #'find-$-syms (code-data expr)))))
+
+(defun $-sym-id (sym)
+  (let ((n-str (subseq (sym-name sym) 1)))
+    (cond
+      ((string= n-str "") 0)
+      ((string= n-str "&") -1)
+      (t (reduce $(+ (* 10 $0)
+                     (- (char-code $1)
+                        (char-code #\0)))
+                 n-str
+                 :initial-value 0)))))
+
+(def-op "dollar-fn" (expr)
+  (let* (($-syms (find-$-syms expr))
+         (max-id (reduce $(if (> $0 $1) $0 $1)
+                         (mapcar #'$-sym-id $-syms)
+                         :initial-value -1))
+         ;; check for variadic args
+         (has-vari (member "$&"
+                           $-syms
+                           :test #'equal
+                           :key #'sym-name))
+         (pos (loop for i from 0 to max-id
+                 ;; remember the CONS b/c parameters may have optional values
+                 collect (cons (fnintern (format nil "$~a" i)
+                                         interpreter)
+                               nil)))
+         (params (make-param-list :pos pos
+                                  :vari (and has-vari
+                                             (fnintern "$&" interpreter)))))
+    (make-fnfun :body
+                (lambda (args)
+                  (let ((env0 (bind-params params args env interpreter)))
+                    ;; add the alternative symbol for the first arg
+                    (if (>= max-id 0)
+                        (env-add env0 (fnintern "$" interpreter)
+                                 (env-get env0 (fnintern "$0" interpreter))))
+                    (eval-code expr env0 interpreter))))))
 
 (def-op "if" (test then else)
   (let ((b (eval-code test env interpreter)))
