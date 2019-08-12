@@ -35,8 +35,11 @@
       (sb-ext:exit :code -1))
     (if (cdr args)
         (with-open-file (in (cadr args) :direction :input) 
-          (mapcar(eval-ast $)
-                  (parse (scan in))))
+          (handler-case (mapcar $(eval-ast $)
+                                (parse (scan in)))
+            (fn-error (x)
+              (princ x)
+              (terpri))))
         (loop (handler-case
                   (progn
                     (princ "> ")

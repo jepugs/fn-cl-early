@@ -309,10 +309,10 @@
   (let ((fun (make-fnfun :params (code->param-list (cdr name))
                          :body body
                          :closure env)))
-   (env-add (slot-value interpreter 'globals)
-            (code-data (car name))
-            (make-cell :value fun))
-   fun))
+    (env-add (slot-value interpreter 'globals)
+             (code-data (car name))
+             (make-cell :value fun))
+    fun))
 
 (defun set-var (name value env interpreter)
   (let ((cell (find-cell name env interpreter)))

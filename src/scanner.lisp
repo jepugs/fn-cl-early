@@ -94,11 +94,11 @@
 
 (defun skip-char (ss)
   "Advance the reader head without adding the character to the current token."
-  (let ((c (read-char (scanner-state-stream ss))))
+  (let ((c (read-char (scanner-state-stream ss) nil :eof)))
     (if (eql c #\newline)
-          (progn (incf (scanner-state-line ss))
-                 (setf (scanner-state-column ss) 0))
-          (incf (scanner-state-column ss)))
+        (progn (incf (scanner-state-line ss))
+               (setf (scanner-state-column ss) 0))
+        (incf (scanner-state-column ss)))
     c))
 
 (defun peek (ss)
@@ -189,7 +189,7 @@
 
       ;; comments
       ((#\;)
-       (do ((c (skip-char ss)))
+       (do ((c (skip-char ss) (skip-char ss)))
            ((or (eql c #\newline)
                 (eql c :eof)))))
 

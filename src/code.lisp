@@ -191,7 +191,7 @@
 (defun validate-exprs (args)
   (mapc #'validate-code args))
 
-(defun validate-params (c &optional (prefix ""))
+(defun validate-params (o data &optional (prefix ""))
   (labels ((check-params (lst key opt)
              (if lst
                  (let ((p (car lst)))
@@ -204,14 +204,14 @@
                      ;; required positional argument
                      ((code-sym? p)
                       (when opt
-                        (code-error
-                         c
+                        (fn-error
+                         o
                          "~a~a"
                          prefix
                          "required positionals parameters can't come after optional parameters"))
                       (when key
-                        (code-error
-                         c
+                        (fn-error
+                         o
                          "~a~a"
                          prefix
                          "non-keyword parameters cannot follow keyword parameters"))
@@ -220,8 +220,8 @@
                      ;; required keyword argument
                      ((code-quoted-sym? p)
                       (when opt
-                        (code-error
-                         c
+                        (fn-error
+                         o
                          "~a~a"
                          prefix
                          "required keyword parameters cannot follow optional parameters"))
@@ -234,35 +234,35 @@
                         (if (code-quoted-sym? name)
                             (check-params (cdr lst) t opt)
                             (if key
-                                (code-error
-                                 c
+                                (fn-error
+                                 o
                                  "~a~a"
                                  prefix
                                  "non-keyword parameters cannot follow keyword parameters")
                                 (check-params (cdr lst) nil t)))))
 
-                     (t (code-error c
-                                    "~a~a"
-                                    prefix
-                                    "malformed parameter"))))))
+                     (t (fn-error o
+                                  "~a~a"
+                                  prefix
+                                  "malformed parameter"))))))
            ;; check variadic parameter
            (check-vari-param (lst)
              (unless (length= lst 2)
-               (code-error c
-                           "~a~a"
-                           prefix
-                           "too many parameters after &"))
+               (fn-error o
+                         "~a~a"
+                         prefix
+                         "too many parameters after &"))
              (unless (code-sym? (cadr lst))
-               (code-error c
-                           "~a~a"
-                           prefix
-                           "malformed variadic parameter"))))
-    (if (code-list? c)
-        (check-params (code-data c) nil nil)
-        (code-error c
-                    "~a~a"
-                    prefix
-                    "parameter list must be a list"))))
+               (fn-error o
+                         "~a~a"
+                         prefix
+                         "malformed variadic parameter"))))
+    (if (listp data)
+        (check-params data nil nil)
+        (fn-error o
+                  "~a~a"
+                  prefix
+                  "parameters must form a list"))))
 
 
 (defun validate-apply (o args)
@@ -291,14 +291,16 @@
       ;; function definition
       ((and (code-list? place)
             (code-sym? (code-car place)))
-       (validate-params (code-cdr place)
+       (validate-params o
+                        (code-cdr place)
                         "in function definition parameters: ")
        (validate-exprs (cdr args)))
       ;; method definition
       ((and (code-list? place)
             (code-list? (code-car place))
             (code-sym? (code-car (code-car place))))
-       (validate-params (code-cdr place)
+       (validate-params o
+                        (code-cdr place)
                         "in method definition parameters: ")
        (validate-exprs (cdr args)))
       (t (fn-error o
@@ -310,14 +312,14 @@
         (params (cadr args)))
     (unless (code-sym? name)
       (fn-error o "invalid class name"))
-    (validate-params params "in defclass parameters: ")))
+    (validate-params o (code-data params) "in defclass parameters: ")))
 
 (defun validate-defmacro (o args)
   (check-arg-length>= o args 2 "defmacro")
   (unless (and (code-list? (car args))
                (code-sym? (code-car (car args))))
     (fn-error o "malformed macro prototype"))
-  (validate-params (code-cdr (car args)) "in defmacro parameters: ")
+  (validate-params o (code-cdr (car args)) "in defmacro parameters: ")
   (validate-exprs (cdr args)))
 
 (defun validate-defmethod (o args)
@@ -327,7 +329,7 @@
                 (code-list? (code-car proto))
                 (code-sym? (code-car (code-car proto))))
      (fn-error o "malformed defmethod expression"))
-   (validate-params (code-cdr proto))))
+   (validate-params o (code-cdr proto))))
 
 (defun validate-defvar (o args)
   (check-arg-length= o args 2 "defvar")
@@ -346,7 +348,7 @@
 
 (defun validate-fn (o args)
   (check-arg-length>= o args 2 "fn")
-  (validate-params (car args) "in fn parameters: ")
+  (validate-params o (code-data (car args)) "in fn parameters: ")
   (validate-exprs (cdr args)))
 
 (defun validate-get (o args)
