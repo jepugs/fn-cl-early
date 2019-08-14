@@ -1,0 +1,7 @@
+SBCL=@SBCL@
+
+fn:
+	cd @abs_srcdir@; $(SBCL) --script build.lisp @abs_builddir@
+
+clean:
+	rm fn

@@ -1,3 +1,8 @@
 *.fasl
-git-local
+autom4te.cache
+configure
+config.status
+config.log
 fn
+git-local
+Makefile
