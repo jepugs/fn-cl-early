@@ -31,7 +31,7 @@
    :defconstant-1 :symb :quoted-p :name-eq :macroexpand-all :with-gensyms :xor
    ;; error handling
    :fn-error :origin :make-origin :origin-filename :origin-line :origin-column :filename
-   :line :column :macro))
+   :line :column :macro :message :module))
 
 (in-package :fn.util)
 

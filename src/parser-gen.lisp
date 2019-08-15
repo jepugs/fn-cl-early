@@ -282,8 +282,10 @@ containing the size of the largest match and the callback for the corresponding 
   (unless (and (length= stack 1)
                (eq (slot-value (car stack) 'nonterminal) 'program))
     (let ((err-elt (find-if-not $(eq (slot-value $ 'nonterminal) 'expr)
-                                stack :from-end t)))
-      (fn-error (slot-value err-elt 'origin)
+                                stack
+                                :from-end t)))
+      (fn-error (slot-value (slot-value err-elt 'value)
+                            'origin)
                 "parsing failed due to incomplete expression")))
   stack)
 

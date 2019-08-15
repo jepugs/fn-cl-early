@@ -23,7 +23,10 @@
    :empty :empty? :fnnull :fnnull? :true :true? :false :false? :num :num?
    ;; symbols
    :sym :sym? :sym-id :sym-name :sym-name-is?
-   :symtab :by-name :by-id :symtab-intern
+   :symtab :by-name :by-id :symtab-intern :make-symtab
+   :apply-sym :case-sym :cond-sym :class-of-sym :def-sym :defclass-sym :defmacro-sym :defmethod-sym
+   :defvar-sym :do-sym :dollar-fn-sym :fn-sym :get-field-sym :get-sym :if-sym :let-sym :quote-sym
+   :quasiquote-sym :set-sym :unquote-sym :unquote-splice-sym 
    ;; sequences
    :fnlist :fnlist? :fnlist->list :fnappend :fnmapcar :fnmapcan :fnstring :string? :table :table?
    ;; functions and local environments
@@ -87,9 +90,12 @@
   (string-equal (sym-name sym) name))
 
 (defclass symtab ()
-  ((next-id :initform 0)
-   (by-name :initform (make-hash-table :test 'equal))
-   (by-id :initform (make-array 256 :fill-pointer 0))))
+  ((next-id :initarg :next-id
+            :initform 0)
+   (by-name :initarg :by-name
+            :initform (make-hash-table :test 'equal))
+   (by-id :initarg :by-id
+          :initform (make-array 256 :fill-pointer 0))))
 (defun symtab-intern (name symtab)
   "Get a symbol from the symbol table. If the symbol does not exist, it is created and added to the
  table."
@@ -101,6 +107,29 @@
            (vector-push-extend s by-id)
            (incf (slot-value symtab 'next-id))
            s))))
+
+;;; constant symbols will be interned in every instance of fn
+
+(defparameter template-symtab (make-instance 'symtab))
+
+(macrolet ((def-sym-var (name)
+             `(defparameter ,(intern (concatenate 'string (string-upcase name) "-SYM"))
+                (symtab-intern ,name template-symtab)))
+           (def-syms (&body lst)
+             `(progn ,@(mapcar $`(def-sym-var ,$) lst))))
+  (def-syms "apply" "case" "cond" "class-of" "def" "defclass" "defmacro" "defmethod"
+            "defvar" "do" "dollar-fn" "fn" "get-field" "get" "if" "let" "quote"
+            "quasiquote" "set" "unquote" "unquote-splice"))
+
+(defun make-symtab ()
+  (with-slots (next-id by-name by-id) template-symtab 
+    (make-instance 'symtab
+                   :next-id next-id
+                   :by-name (copy-ht by-name)
+                   :by-id (make-array (length by-id)
+                                      :initial-contents by-id
+                                      :fill-pointer (fill-pointer by-id)
+                                      :adjustable t))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
