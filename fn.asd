@@ -13,6 +13,7 @@
   :pathname "src"
   :components ((:file "util")
                (:file "dollar-sign-reader")
+               (:file "test")
                (:file "scanner")
                (:file "ast")
                (:file "parser-gen")
