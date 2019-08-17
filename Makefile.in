@@ -1,6 +1,6 @@
 SBCL=@SBCL@
 
-fn:
+fn: src/*.lisp fn.asd build.lisp
 	cd @abs_srcdir@; $(SBCL) --script build.lisp @abs_builddir@
 
 clean:
