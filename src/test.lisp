@@ -38,12 +38,14 @@
 
 (defun run-test (unit-test)
   (with-slots (expr thunk expected-result test) unit-test
-    (let ((res (funcall thunk)))
-      (if (funcall test res expected-result)
-          (progn (format t "[pass] ~s~%" expr)
-                 t)
-          (progn (format t "[FAIL] ~s~%" expr)
-                 nil)))))
+    (handler-case 
+        (let ((res (funcall thunk)))
+          (if (funcall test expected-result res)
+              (progn (format t "[pass] ~s~%" expr)
+                     t)
+              (progn (format t "[FAIL] ~s~%" expr)
+                     nil)))
+      (fn-error () (format t "[FAIL] ~s~%" expr)))))
 
 (defmacro define-test-suite (name)
   (unless (symbolp name)
@@ -53,6 +55,10 @@
      (setq *current-test-suite* ,name)))
 
 (defmacro define-test (expression expected-value &key (test #'equal) (suite *current-test-suite*))
+  "Define a unit test and add it to SUITE. EXPRESSION should be a Common Lisp expression to evaluate
+ and EXPECTED-VALUE is the output indicating a successful test. TEST is the function used to check
+ this. Setting TEST to #'VALUES will cause the test to pass unless an FN-ERROR is thrown. Other
+ types of error conditions are not handled and will result in the test program crashing."
   `(push (make-unit-test :expr ',expression
                          :thunk (lambda () ,expression)
                          :expected-result ,expected-value
@@ -61,8 +67,9 @@
 
 (defun verify-error (thunk &key message origin no-error)
   "Perform a unit test on an expression that should throw an FN-ERROR. If MESSAGE or ORIGIN are
- supplied, the respective slots in the error must be EQUAL to them. Otherwise, any thrown error will
- cause the test to pass."
+ supplied, the respective slots in the error must be EQUAL to them. If neither is specified the test
+ will pass on an FN-ERROR regardless of its slot values. If no error is emitted, the test will
+ always fail."
   (handler-case (progn (funcall thunk)
                        no-error)
     ;; get the fn error and check its slots

@@ -1,6 +1,9 @@
 
 (in-package :fn.code)
 
+;; add the testing package
+(use-package :fn.test)
+
 (defvar *test-symtab* (make-instance 'symtab))
 
 (defun str->code (str)

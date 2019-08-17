@@ -17,7 +17,7 @@
 
 (defpackage :fn.code
   (:documentation "intermediate representation and syntax checking")
-  (:use :cl :fn.util :fn.test :fn.ast :fn.values)
+  (:use :cl :fn.util :fn.ast :fn.values)
   (:export :code :origin :data :make-code :code-origin :code-data :code? :code-intern :ast->code
            :code-list? :code-sym? :code-sym-name :code-sym-id :code-car :code-cadr :code-cdr
            :code-literal? :code-quoted-sym? :code-op-is :code->fnvalue :validate-code
