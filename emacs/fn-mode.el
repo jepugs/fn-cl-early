@@ -11,7 +11,7 @@
 (add-to-list 'auto-mode-alist '("\\.fn\\'" . fn-mode))
 
 (defvar fn-definers
-  '("def" "defmacro" "defvar"))
+  '("def" "defmacro" "defvar" "defvar*"))
 (defvar fn-special-operators
   '("apply" "defmethod" "defclass" "case" "cond" "do" "if" "fn" "let" "get" "get-field" "set"
     "quote" "quasiquote" "unquote" "unquote-splice" "dollar-fn")
@@ -43,7 +43,7 @@
    ;; definition names
    (list (concat
           "("
-          (regexp-opt '("def" "defvar") t)
+          (regexp-opt '("def" "defvar" "defvar*") t)
           ;; whitespace
           "\\_>[[:space:]]+"
           ;; symbol
@@ -52,7 +52,7 @@
    ;; function & macro definitions
    (list (concat
           "("
-          (regexp-opt '("def" "defmacro" "defvar") t)
+          (regexp-opt '("def" "defmacro") t)
           ;; whitespace and opening paren
           "\\_>[[:space:]]+("
           ;; symbol

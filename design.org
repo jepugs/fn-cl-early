@@ -90,6 +90,136 @@ some modern features.
   #+END_SRC
 
 
+* Modules and Name resolution
+
+** Definition order
+
+In fn, loading source files behaves as is they are evaluated one expression at a time from beginning
+to end. Function and variable lookups may be performed at runtime, so a function may use a variable
+or another function whose definition appears later in the file.
+
+The same rules generally apply to macros, but with some gotchas. Macros may be defined in the same
+file they are used in, but must be appear (lexically) before any uses. If a macro uses a function to
+create its expansion, then that function must be defined before the macro is first expanded (duh)
+
+
+** Modules
+
+Right now, modules have a 1-to-1 correlation with fn source files. To import a file, you use import
+with a symbol corresponding to the file name, without any extension.
+
+#+BEGIN_SRC fn
+;; imports from file "x.fn" and binds the module as x
+(import x)
+;; imports from file "x.fn" and binds the module as y
+(import x 'as y)
+;; imports from file "x.fn" and binds all variables locally
+(import x 'as _)
+#+END_SRC
+
+Modules are first class objects and their variables may be accessed using ~get~ or dot syntax.
+
+#+BEGIN_SRC fn
+;; file my-module.fn
+(def my-var 26)
+
+;; file example-a.fn
+(import my-module)
+my-module.my-var ;=> 26
+
+;; file example-b.fn
+(import my-module 'as mod)
+mod.my-var ;=> 26
+
+;; file example-c.fn
+(import my-module 'as _)
+my-var ;=> 26
+#+END_SRC
+
+
+*** Accessing modules without imports
+
+The function ~(find-module sym)~ can be used to search for modules at runtime (the argument ~sym~ is
+evaluated). Additionally, the syntax ~#.sym~ (eqv. to ~(get # 'sym~)) is available as a shorthand for
+module lookups.
+
+
+*** Implementation note: modules, macros, and dynamic vars
+
+In Common Lisp, importing a macro means importing a symbol from another package. E.g. I import ~LOOP~
+from ~CL~ and now every time I type ~loop~ it gets silently converted to ~CL:LOOP~. This allows a
+one-to-one correspondence between macros and the symbols that represent them. At evaluation time, we
+are guaranteed that the operator for a macro expression will always be a symbol, and its just a
+matter of looking in that symbol's macro binding slot. In ~fn~, we no longer have the guarantee that
+the operator is a symbol, and we have first-class module objects instead of packages, so we need to
+take a more sophisticated approach.
+
+The interpreter will internally maintain a list of which symbols (if any) are bound to modules.
+Then, to do macro expansion on a list, we perform two checks: first, whether it's a symbol bound to
+a macro in the current module (duh). If not, we check next whether the operator is a ~get~ expression.
+If it is, and its first argument is a symbol referencing an imported module, then we can check that
+module for macro bindings as well. This allows painless use of macros from other modules.
+
+
+*** Future extension: ~__modules.fn~
+
+In the future, a file named ~__modules.fn~ may be added to a source directory in order to define
+modules that don't correspond directly to files and to modify the search path on a per-project
+basis. In addition, it will be possible to automatically define wrapper modules that import all
+their variables from submodules in order to create cleaner interfaces.
+
+
+** Dynamic variables
+
+In fn, dynamic variables may be created using ~defvar*~. In keeping with lisp tradition, we
+recommend naming dynamic variables with earmuffs. (No ~def*~ form is included, because all dynamic
+variables need to be resolved, well, dynamically, so they might as well be mutable).
+
+#+BEGIN_SRC fn
+(defvar* *name* initial-value)
+#+END_SRC
+
+This declares ~*name*~ to be a dynamic variable. Dynamic variables may be rebound with ~let~.
+
+#+BEGIN_SRC fn
+(defvar *special-x* 27)
+
+(def (get-value) *special-x*)
+
+(get-value) ;=> 27
+(let (*special-x* 420)
+  (get-value) ;=> 420
+  )
+(get-value) ;=>27
+#+END_SRC
+
+IMPORTANT NOTE:* Unlike in other dialects of lisp, special variables must be declared before they
+are treated as special. Uses prior to that point will be treated as normal lexical variables.
+Example:
+
+#+BEGIN_SRC fn
+(def (call-with-square-0 fun x)
+  (let (sq (* x x))
+    (fun sq)))
+
+(defvar* sq 16)
+
+(def (call-with-square-1 fun x)
+  (let (sq (* x x))
+    (fun sq)))
+
+(def (get-sq _) sq)
+
+;; call-with-square-0 treats sq as a normal lexical variable because it was defined before sq was 
+;; declared dynamic.
+(call-with-square-0 get-sq 6) ;=>16
+
+;; call-with-square-1 treats sq as a dynamic variable
+(call-with-square-0 get-sq 6) ;=>36
+
+#+END_SRC
+
+
 * Functions
 
 There are two special operators that create functions: ~fn~ and ~dollar-fn~. The latter is usually
