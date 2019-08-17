@@ -209,9 +209,9 @@ contents of the table."
     res))
 
 
-;; change how we print hash tables so they look like dicts in fn
+;; change how we print hash tables so we can see their contents
 (defmethod print-object ((ht hash-table) stream)
-  (format stream "{~{~s~^ ~}}" (ht->plist ht)))
+  (format stream "{~{~s~^ ~%~}}" (ht->plist ht)))
 
 
 ;; The NREVERSE calls in these functions maintain the order of the keys in the table so that MAKE-HT
