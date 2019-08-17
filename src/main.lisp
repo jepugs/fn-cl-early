@@ -45,7 +45,7 @@
                     (princ "> ")
                     (finish-output)
 
-                    (mapcar $(fnprintln-code (eval-ast $))
+                    (mapcar $(fnprintln (eval-ast $))
                             (parse (scan-from-string (read-line)))))
 
                 ;; exit on SIGINT

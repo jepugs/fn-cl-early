@@ -33,12 +33,13 @@
 
   (defmacro handling-runtime-errors (code &body body)
     "Converts runtime errors to fn errors"
-    (with-gensyms (x)
-      `(handler-case (progn ,@body)
-         (runtime-error (,x)
-           (princ ,code)
-           (fn-error (code-origin ,code)
-                     (slot-value ,x 'message))))))
+    (with-gensyms (x code-sym)
+      `(let ((,code-sym ,code))
+         (handler-case (progn ,@body)
+           (runtime-error (,x)
+             (fn-error (code-origin ,code-sym)
+                       "Runtime error: ~a"
+                       (slot-value ,x 'message)))))))
 
   (defmacro runtime-error (format-string &rest format-args)
     `(error 'runtime-error
@@ -75,11 +76,41 @@
                 ,@body)))
       special-op-dispatch))
 
+  (defmacro def-builtin (name value)
+    "Define a built-in variable"
+    `(push (cons ,name ,value) builtin-globals))
+
   (defmacro defun-builtin (name args-var &body body)
     "Define a builtin function and add it to the list"
     `(push (cons ,name
                  (make-fnfun :body (lambda (,args-var) ,@body)))
            builtin-globals))
+
+  (defun error-constructor (args)
+    (declare (ignore args))
+    (runtime-error "Can't construct this type"))
+  (defmacro def-builtin-class (sym &key (fields 'nil) (constructor '#'error-constructor))
+    (with-gensyms (sym-var)
+      `(let ((,sym-var ,sym)) 
+         (def-builtin (sym-name ,sym-var)
+             (make-fnclass :name ,sym-var
+                           :fields ,fields
+                           :constructor (make-fnfun :body ,constructor))))))
+
+  ;; classes
+  (def-builtin-class bool-class-sym)
+  (def-builtin-class class-class-sym
+      :fields (list name-sym fields-sym constructor-sym))
+  (def-builtin-class function-class-sym)
+  (def-builtin-class list-class-sym
+      :constructor $(apply #'fnlist $))
+  (def-builtin-class module-class-sym
+      :fields (list name-sym vars-sym macros-sym))
+  (def-builtin-class method-class-sym)
+  (def-builtin-class null-class-sym)
+  (def-builtin-class num-class-sym)
+  (def-builtin-class string-class-sym
+      :constructor $(apply #'fnstring $))
 
   (defun-builtin "+" args
     (num (reduce #'+ args)))
@@ -103,10 +134,6 @@
         (fnprintln (car args))
         (runtime-error "println called with too many arguments"))
     fnnull)
-  (defun-builtin "String" args
-    (apply #'fnstring args))
-  (defun-builtin "List" args
-    (apply #'fnlist args))
   (defun-builtin "exit" args
     (funcall #'sb-ext:exit
              :code (if args (floor (car args)) 0)))
@@ -121,9 +148,9 @@
   (modules)
   (symtab (make-symtab)))
 
-(defun fnintern (name interpreter)
-  "Get an internal symbol using INTERPRETER's symbol table."
-  (symtab-intern name (interpreter-symtab interpreter)))
+;; defined before initialization to avoid compiler warning
+(defparameter *current-env* nil "Lexical environment used for evaluation")
+(defparameter *interpreter* nil "Interpreter used for evaluation")
 
 (defun init-interpreter ()
   "Initialize an interpreter with built-in globals and symbols and a default module."
@@ -135,20 +162,6 @@
                            (fnintern (car x) res)
                            (make-cell :value (cdr x))))
     res))
-
-(defparameter *interpreter* (init-interpreter)
-  "Interpreter used for evaluation")
-(defparameter *current-env* (init-env nil nil (car (interpreter-modules *interpreter*)))
-  "Lexical environment used for evaluation")
-
-(defun search-for-module (str)
-  (runtime-error "Could not find module ~a" str))
-
-(defun find-module (sym)
-  (aif (find-if $(eq sym (fnmodule-name $))
-                (interpreter-modules *interpreter*))
-       (cdr it)
-       (search-for-module (sym-name sym))))
 
 (defun init-env (syms &optional (parent *current-env*) (module (current-module)))
   "Create an ENV with uninitialized value cells for each symbol in SYMS."
@@ -162,8 +175,28 @@
               :module module
               :parent parent)))
 
+(defun fnintern (name &optional (interpreter *interpreter*))
+  "Get an internal symbol using INTERPRETER's symbol table."
+  (symtab-intern name (interpreter-symtab interpreter)))
+
+(setf *interpreter* (init-interpreter))
+(setf *current-env* (init-env nil nil (car (interpreter-modules *interpreter*))))
+
+
+
 (defun current-module ()
   (env-module *current-env*))
+
+
+(defun search-for-module (str)
+  (runtime-error "Could not find module ~a" str))
+
+(defun find-module (sym)
+  (aif (find-if $(eq sym (fnmodule-name $))
+                (interpreter-modules *interpreter*))
+       (cdr it)
+       (search-for-module (sym-name sym))))
+
 
 (defun set-var (name value)
   (let ((cell (get-cell *current-env* name)))
@@ -214,7 +247,12 @@
          (args (code-cdr c)))
     (cond
       ((eq op apply-sym) (eval-apply args))
+      ((eq op class-of-sym) (eval-class-of (car args)))
       ((eq op def-sym) (eval-def (car args) (cdr args)))
+      ((eq op defclass-sym) (eval-defclass (code-data (code-car (car args)))
+                                           (code-cdr (car args))))
+      ((eq op get-sym) (eval-get (car args)
+                                 (cdr args)))
       ((not (sym? op)) (eval-funcall c))
       (t (aif (assoc (sym-name op)
                      special-op-dispatch
@@ -232,12 +270,12 @@
     (t (eval-code (car body))
        (eval-body (cdr body)))))
 
-(defun bind-params (param-list args outer-env interpreter)
+(defun bind-params (param-list args outer-env)
   "Extend OUTER-ENV with variable bindings created by PARAM-LIST and ARGS."
   (with-slots (pos keyword vari) param-list
     (labels ((get-optional (p)
                (if (cdr p)
-                   (eval-code (cdr p) outer-env interpreter)
+                   (eval-code (cdr p) outer-env)
                    (runtime-error "Missing required argument for parameter list")))
              (bind-positional (acc params args)
                (cond
@@ -300,17 +338,19 @@
   (with-slots (params body closure) fnfun
     (if (functionp body)
         (funcall body args)
-        (let ((*current-env* (bind-params params args closure *interpreter*)))
+        (let ((*current-env* (bind-params params args closure)))
           (eval-body body)))))
 
 (defun eval-funcall (c)
   "Evaluate a function call."
-  (let ((args (mapcar #'eval-code
-                      (code-cdr c)))
-        (op (eval-code (code-car c))))
-    (unless (fnfun? op)
-      (runtime-error "Operator is not a function"))
-    (call-fun op args)))
+  (let ((op (eval-code (code-car c)))
+        (args (mapcar #'eval-code
+                      (code-cdr c))))
+    (cond
+      ((fnfun? op) (call-fun op args))
+      ((fnmethod? op) (call-method op args))
+      ((fnclass? op) (call-fun (fnclass-constructor op) args))
+      (t (runtime-error "Operator is not a callable object")))))
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -326,20 +366,44 @@
       (rplacd (last arg-list) nil)
       (call-fun fun arg-list))))
 
+(defun eval-class-of (arg)
+  (let ((v (eval-code arg)))
+    (cond ((or (true? v) (false? v)) (class-by-name (fnintern "Bool")))
+          ((fnclass? v) (class-by-name (fnintern "Class")))
+          ((fnfun? v) (class-by-name (fnintern "Function")))
+          ((fnlist? v) (class-by-name (fnintern "List")))
+          ((fnmodule? v) (class-by-name (fnintern "Module")))
+          ((fnmethod? v) (class-by-name (fnintern "Method")))
+          ((fnnull? v) (class-by-name (fnintern "Null")))
+          ((num? v) (class-by-name (fnintern "Num")))
+          ((string? v) (class-by-name (fnintern "String")))
+          ((fnobj? v) (fnobj-class v))
+          (t (runtime-error "object has unknown class")))))
+
+(defun class-by-name (sym)
+  (aif (get-module-cell (current-module) sym)
+       (if (fnclass? (cell-value it))
+           (cell-value it)
+           (runtime-error "Something is wrong; ~a is not a class object!" (->string sym)))
+       (runtime-error "Something is wrong; ~a is not a class object!" (->string sym))))
+
 ;; TODO: right now, new definitions silently clobber old ones. This behavior is useful for testing,
 ;; but dangerous in practice, so it should at least emit a warning.
 (defun eval-def (name-or-proto value-or-body)
   (if (code-list? name-or-proto)
       (let ((name (code-car name-or-proto))
             (params (code-cdr name-or-proto)))
-        (eval-function-def (code-data name) params value-or-body))
+        (if (code-list? name)
+            (eval-method-def (code-data (code-car name))
+                             (code-cdr name)
+                             params
+                             value-or-body)
+            (eval-function-def (code-data name) params value-or-body)))
       (let ((v (eval-code (car value-or-body))))
         (add-global-cell *current-env*
                          (code-data name-or-proto)
                          (make-cell :value v :mutable nil))
         v)))
-
-;; (defun eval-def )
 
 (defun eval-function-def (name params body)
   (let ((fun (make-fnfun :params (code->param-list params)
@@ -350,6 +414,32 @@
                      (make-cell :value fun))
     fun))
 
+(defun eval-method-def (name classes params body)
+  (declare (ignore name classes params body))
+  (runtime-error "method def not implemented"))
+
+(defun eval-defclass (name params-code)
+  (let* ((params (code->param-list params-code))
+         (fields (param-vars params))
+         (new-class (make-fnclass :name name :fields fields)))
+    (setf (fnclass-constructor new-class) (make-constructor new-class params))
+    (add-global-cell *current-env* name (make-cell :value new-class))
+    new-class))
+
+(defun param-vars (param-list)
+  "Get the parameters bound by a PARAM-LIST"
+  (with-slots (pos keyword vari) param-list
+    (append (mapcar #'car pos)
+            (mapcar #'car keyword)
+            (if vari (list vari)))))
+
+(defun make-constructor (class params)
+  "Create a constructor for the provided class"
+  (with-slots (name fields) class
+    (make-fnfun :params params
+                :body $(make-fnobj :class class
+                                   :contents (env-table (bind-params params $ nil))))))
+
 (def-op "defvar" (name value)
   (let ((v (eval-code value)))
     (add-global-cell *current-env*
@@ -357,6 +447,76 @@
                      (make-cell :value v :mutable t))
     v))
 
+
+(defun eval-get (obj-code keys-code)
+  (let ((obj (eval-code obj-code))
+        (keys (mapcar #'eval-code keys-code)))
+    (reduce #'get-key keys :initial-value obj)))
+
+(defun get-key (obj key)
+  (cond
+    ((fnlist? obj) (fnlist-get obj key))
+    ((fnclass? obj) (fnclass-get-field obj key))
+    ((string? obj) (fnstring-get obj key))
+    ;; TODO: add check for get-method implementations
+    ((fnobj? obj) (fnobj-get-field obj key))
+    (t (runtime-error "Object ~a has no gettable fields or indices" (->string obj)))))
+
+;; TODO: add support for negative indices
+(defun fnlist-get (obj key)
+  (cond
+    ((num? key)
+     (unless (num-int? key)
+       (runtime-error "list index is not an integer: ~a" (->string key)))
+     (unless (>= key 0)
+       (runtime-error "list index is negative: ~a" (->string key)))
+     (rlambda (pos lst) ((truncate key) obj)
+       (if (empty? lst)
+           (runtime-error "list index out of bounds: ~a" (->string key))
+           (if (zerop pos)
+               (car lst)
+               (recur (- pos 1) (cdr lst))))))
+    ((eq key hd-sym)
+     (if (empty? obj)
+         (runtime-error "empty list has no hd")
+         (car obj)))
+    ((eq key tl-sym)
+     (if (empty? obj)
+         (runtime-error "empty list has no tl")
+         (cdr obj)))
+    (t (fn-error "list has no field named ~a" (->string key)))))
+
+(defun fnstring-get (obj key)
+  (unless (num? key)
+    (fn-error "string index is not a number: ~a" (->string key)))
+  (unless (num-int? key)
+    (fn-error "string index is not an integer: ~a" (->string key)))
+  (unless (>= 0 key)
+    (fn-error "string index is negative: ~a" (->string key)))
+  (if (> key (length obj))
+      (fn-error "string index out of bounds: ~a" (->string key))
+      (aref obj (truncate key))))
+
+(defun fnclass-get-field (obj key)
+  (cond
+    ((eq key name-sym) (fnclass-name obj))
+    ((eq key fields-sym) (apply #'fnlist (fnclass-fields obj)))
+    ((eq key constructor-sym) (fnclass-constructor obj))
+    (t (runtime-error "object has no field named ~a" (->string key)))))
+
+(defun fnmodule-get-field (obj key)
+  (cond
+    ((eq key name-sym) (fnmodule-name obj))
+    ((eq key vars-sym) (fnmodule-vars obj))
+    ((eq key macros-sym) (fnmodule-macros obj))
+    (t (runtime-error "object has no field named ~a" (->string key)))))
+
+(defun fnobj-get-field (obj key)
+  (unless (sym? key)
+    (runtime-error "field name not a symbol: ~a" (->string key)))
+  (aif (gethash (sym-id key) (fnobj-contents obj))
+       (cell-value it)
+       (runtime-error "object has no field named ~a" (->string key))))
 
 (def-op "set" (place value)
   (cond
@@ -498,7 +658,7 @@
                                              (fnintern "$&" interpreter)))))
     (make-fnfun :body
                 (lambda (args)
-                  (let ((env0 (bind-params params args env interpreter)))
+                  (let ((env0 (bind-params params args env)))
                     ;; add the alternative symbol for the first arg
                     (if (>= max-id 0)
                         (add-cell env0
@@ -603,8 +763,6 @@
       (if (code-list? code)
           (qqtree code 1)
           (code->fnvalue code)))))
-
-
 
 
 (def-op "do" (expr0 &rest body)

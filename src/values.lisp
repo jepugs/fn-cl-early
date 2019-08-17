@@ -20,27 +20,38 @@
   (:use :cl :fn.util :fn.ast)
   (:export
    ;; simple constants
-   :empty :empty? :fnnull :fnnull? :true :true? :false :false? :num :num?
+   :empty :empty? :fnnull :fnnull? :true :true? :false :false? :num :num? :num-int?
    ;; symbols
    :sym :sym? :sym-id :sym-name :sym-name-is?
    :symtab :by-name :by-id :symtab-intern :make-symtab
+   ;; operator symbols
    :apply-sym :case-sym :cond-sym :class-of-sym :def-sym :defclass-sym :defmacro-sym :defmethod-sym
-   :defvar-sym :do-sym :dollar-fn-sym :fn-sym :get-field-sym :get-sym :if-sym :let-sym :quote-sym
-   :quasiquote-sym :set-sym :unquote-sym :unquote-splice-sym 
+   :defvar-sym :do-sym :dollar-fn-sym :fn-sym :get-field-sym :get-sym :if-sym :import-sym :let-sym
+   :quote-sym :quasiquote-sym :set-sym :unquote-sym :unquote-splice-sym
+   ;; default class symbols
+   :bool-class-sym :class-class-sym :function-class-sym :list-class-sym :module-class-sym
+   :method-class-sym :null-class-sym :num-class-sym :string-class-sym
+   ;; built-in class fields
+   :hd-sym :tl-sym :name-sym :fields-sym :constructor-sym :vars-sym :macros-sym
+   ;; built-in methods
+   :call-sym :get-method-sym :set-method-sym :add-method-sym :mul-method-sym :sub-method-sym
+   ;; other built-in symbols
+   :amp-sym :hash-sym :wildcard-sym
    ;; sequences
-   :fnlist :fnlist? :fnlist->list :fnappend :fnmapcar :fnmapcan :fnstring :string? :table :table?
+   :fnlist :fnlist? :fnlist->list :fnlist-length :fnappend :fnmapcar :fnmapcan
+   :fnstring :string? :table :table?
    ;; modules and environments
    :cell :make-cell :cell-value :value :cell-mutable :mutable
-   :make-env :add-global-cell :add-cell :get-cell :get-macro :set-global-macro :env-module
-   :env-table
+   :make-env :add-global-cell :add-cell :get-module-cell :get-cell :get-macro :set-global-macro
+   :env-module :env-table
    :fnmodule :name :vars :macros :make-fnmodule :fnmodule-name :fnmodule-vars :fnmodule-macros
-   :add-module-cell
+   :add-module-cell :fnmodule?
    ;; functions
    :param-list :make-param-list :pos :keyword :vari
    :fnfun :params :body :env :closure :param-list-syms :make-fnfun :fnfun?
    ;; general objects
-   :fntype :fields :fntype-name :make-fntype :fntype?
-   :fnobj :type :contents :make-fnobj :fnobj?
+   :fnclass :fields :constructor :fnclass-name :make-fnclass :fnclass-fields :fnclass-constructor :fnclass?
+   :fnobj :class :contents :make-fnobj :fnobj-class :fnobj-contents :fnobj?
    :fnmethod :make-fnmethod :fnmethod?
    ;; pretty printing
    :->string :fnprint :fnprintln :->code-string :fnprint-code :fnprintln-code
@@ -78,7 +89,9 @@
 
   (deftype num () 'double-float)
   (defun num (x) (coerce x 'double-float))
-  (defun num? (x) (typep x 'double-float)))
+  (defun num? (x) (typep x 'double-float))
+  (defun num-int? (x)
+    (= (truncate x) x)))
 
 (defstruct (sym (:copier nil)
                 (:predicate sym?))
@@ -121,12 +134,32 @@
                 (symtab-intern ,name template-symtab)))
            (def-syms (&body lst)
              `(progn ,@(mapcar $`(def-sym-var ,$) lst))))
+  ;; special operators
   (def-syms "apply" "case" "cond" "class-of" "def" "defclass" "defmacro" "defmethod"
-            "defvar" "do" "dollar-fn" "fn" "get-field" "get" "if" "let" "quote"
+            "defvar" "do" "dollar-fn" "fn" "get-field" "get" "if" "import" "let" "quote"
             "quasiquote" "set" "unquote" "unquote-splice")
+  ;; misc special syms
   (defparameter wildcard-sym (symtab-intern "_" template-symtab))
   (defparameter hash-sym (symtab-intern "#" template-symtab))
-  (defparameter amp-sym (symtab-intern "&" template-symtab)))
+  (defparameter amp-sym (symtab-intern "&" template-symtab))
+
+  ;; built-in class fields
+  (def-syms "hd" "tl" "name" "fields" "constructor" "vars" "macros")
+
+  ;; built-in class names
+  (defparameter bool-class-sym (symtab-intern "Bool" template-symtab))
+  (defparameter class-class-sym (symtab-intern "Class" template-symtab))
+  (defparameter function-class-sym (symtab-intern "Function" template-symtab))
+  (defparameter list-class-sym (symtab-intern "List" template-symtab))
+  (defparameter module-class-sym (symtab-intern "Module" template-symtab))
+  (defparameter method-class-sym (symtab-intern "Method" template-symtab))
+  (defparameter null-class-sym (symtab-intern "Null" template-symtab))
+  (defparameter num-class-sym (symtab-intern "Num" template-symtab))
+  (defparameter string-class-sym (symtab-intern "String" template-symtab))
+
+  ;; built-in methods
+  (def-syms "call" "get-method" "set-method" "add-method" "mul-method" "sub-method"
+            "div-method"))
 
 (defun make-symtab ()
   (with-slots (next-id by-name by-id) template-symtab 
@@ -157,6 +190,11 @@
   (let ((res (copy-list x)))
     (rplacd (last res) nil)
     res))
+(defun fnlist-length (x)
+  (rlambda (acc lst) (0 x)
+    (if (empty? lst)
+        acc
+        (recur (+ 1 acc) (cdr x)))))
 (defun fnappend (lst0 lst1)
   (if (empty? lst0)
       lst1
@@ -221,6 +259,11 @@
   "Add a new cell to a module given"
   (setf (gethash (sym-id sym) env) cell))
 
+(defun get-module-cell (mod sym)
+  "Get the CELL, if any, associated with SYM in the provided lexical environment and module. Returns
+ NIL on failure."
+  (gethash (sym-id sym) (fnmodule-vars mod)))
+
 (defun get-cell (env sym)
   "Get the CELL, if any, associated with SYM in the provided lexical environment and module. Returns
  NIL on failure."
@@ -269,7 +312,7 @@
 (defstruct (fnclass (:predicate fnclass?) :copier)
   (name nil :type sym :read-only t)
   (fields nil :type list :read-only t)
-  (constructor nil :read-only t))
+  (constructor nil))
 
 (defstruct (fnobj (:predicate fnobj?) :copier)
   (class nil :type fnclass :read-only t)
@@ -279,7 +322,8 @@
 (defstruct (fnmethod (:predicate fnmethod?) :copier)
   (params nil :type param-list :read-only t)
   (dispatch-params nil :type list :read-only t)
-  (impls nil :type hash-table :read-only t))
+  (impls nil :type hash-table :read-only t)
+  (default-impl nil))
 
 (defun get-impl (m types)
   (gethash types (fnmethod-impls m)))
@@ -295,7 +339,7 @@
     ((fnnull? x) "null")
     ((true? x) "true")
     ((false? x) "false")
-    ((num? x) (princ-to-string x))
+    ((num? x) (format nil "~f" x))
     ((fnlist? x)
      (format nil "[~{~a~^ ~}]" (fnmapcar #'->code-string x)))
     ((string? x) (concatenate 'string "\"" x "\""))
@@ -311,12 +355,27 @@
     ((fnnull? x) "null")
     ((true? x) "true")
     ((false? x) "false")
-    ((num? x) (princ-to-string x))
+    ((num? x) (format nil "~f" x))
     ((fnlist? x)
      (format nil "[~{~a~^ ~}]" (fnmapcar #'->string x)))
     ((string? x) x)
     ((sym? x) (slot-value x 'name))
-    ((fnfun? x) "#<FUNCTION>")))
+    ((fnfun? x) "#<FUNCTION>")
+    ((fnclass? x) (concatenate 'string
+                               "#<CLASS: "
+                               (sym-name (fnclass-name x))
+                               ">"))
+    ((fnobj? x)
+     (format nil
+             "(~a ~{~a~^ ~})"
+             (sym-name (fnclass-name (fnobj-class x)))
+             (->> x
+               (fnobj-contents)
+               (ht->plist)
+               (group 2)
+               (reverse)
+               (mapcar $(->string (cell-value (cadr $)))))))
+    (t "#<UNRECOGNIZED-FOREIGN-OBJECT>")))
 
 (defun fnprint (x &optional (stream *standard-output*))
   (princ (->string x) stream))

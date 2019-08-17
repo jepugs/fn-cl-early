@@ -97,7 +97,9 @@
 
        ((ast-dot? a) (list (code-intern o dot-sym-name symtab)
                            (ast->code (slot-value a 'left) symtab)
-                           (ast->code (slot-value a 'right) symtab)))
+                           (make-code o
+                                      (list (code-intern o quot-sym-name symtab)
+                                            (ast->code (slot-value a 'right) symtab)))))
 
        ((ast-sym? a) (symtab-intern (slot-value a 'name) symtab))))))
 
@@ -308,12 +310,12 @@
                    "invalid place in def form")))))
 
 (defun validate-defclass (o args)
-  (check-arg-length= o args 2 "defclass")
-  (let ((name (car args))
-        (params (cadr args)))
+  (check-arg-length= o args 1 "defclass")
+  (let ((name (code-car (car args)))
+        (params (code-cdr (car args))))
     (unless (code-sym? name)
       (fn-error o "invalid class name"))
-    (validate-params o (code-data params) "in defclass parameters: ")))
+    (validate-params o params "in defclass parameters: ")))
 
 (defun validate-defmacro (o args)
   (check-arg-length>= o args 2 "defmacro")
@@ -328,7 +330,9 @@
   (let ((proto (car args)))
    (unless (and (code-list? proto)
                 (code-list? (code-car proto))
-                (code-sym? (code-car (code-car proto))))
+                (code-sym? (code-car (code-car proto)))
+                ;; check that all classes are symbols
+                (every #'code-sym? (code-cdr (code-car proto))))
      (fn-error o "malformed defmethod expression"))
    (validate-params o (code-cdr proto))))
 

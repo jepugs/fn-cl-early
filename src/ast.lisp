@@ -18,9 +18,9 @@
 (defpackage :fn.ast
   (:documentation "AST data structures")
   (:use :cl :fn.util :fn.scanner)
-  (:export :origin :value :contents :expr :name :contents :ast-string :ast-number :ast-paren
-           :ast-bracket :ast-brace :ast-quot :ast-quasiquot :ast-unquot :ast-unquot-splice
-           :ast-dollar :ast-dot :ast-sym :ast-string? :ast-number? :ast-paren?
+  (:export :origin :value :contents :expr :name :contents :left :right :ast-string :ast-number
+           :ast-paren :ast-bracket :ast-brace :ast-quot :ast-quasiquot :ast-unquot
+           :ast-unquot-splice :ast-dollar :ast-dot :ast-sym :ast-string? :ast-number? :ast-paren?
            :ast-bracket? :ast-brace? :ast-quot? :ast-quasiquot? :ast-unquot? :ast-unquot-splice?
            :ast-dollar? :ast-dot? :ast-sym?))
 
