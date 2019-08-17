@@ -115,88 +115,122 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-;;;; main interpreter code
+;;;; interpreter state
 
 (defstruct interpreter
-  (globals (init-env nil))
-  (macros (init-env nil))
-  (symtab (make-instance 'symtab)))
-
-(defun set-global (interpreter sym cell)
-  (setf (gethash (sym-id sym)
-                 (slot-value interpreter 'globals))
-        cell))
-
-(defun init-interpreter ()
-  "Initialize an interpreter with all defined built-in globals"
-  (let ((res (make-interpreter)))
-    (loop for x in builtin-globals
-       do (set-global res
-                      (fnintern (car x) res)
-                      (make-cell :value (cdr x))))
-    res))
-
-(defun get-macro (sym interpreter)
-  (gethash (sym-id sym) (slot-value interpreter 'macros)))
+  (modules)
+  (symtab (make-symtab)))
 
 (defun fnintern (name interpreter)
   "Get an internal symbol using INTERPRETER's symbol table."
   (symtab-intern name (interpreter-symtab interpreter)))
 
-(defparameter *global-interpreter* (init-interpreter))
+(defun init-interpreter ()
+  "Initialize an interpreter with built-in globals and symbols and a default module."
+  (let* ((symtab (make-symtab))
+         (mod (make-fnmodule :name (symtab-intern "__default" symtab)))
+         (res (make-interpreter :modules (list mod) :symtab symtab)))
+    (loop for x in builtin-globals
+       do (add-module-cell mod
+                           (fnintern (car x) res)
+                           (make-cell :value (cdr x))))
+    res))
 
-(defun eval-code (c &optional (env (init-env nil)) (interpreter *global-interpreter*))
-  "Evaluate a code object."
-  (handling-runtime-errors c
+(defparameter *interpreter* (init-interpreter)
+  "Interpreter used for evaluation")
+(defparameter *current-env* (init-env nil nil (car (interpreter-modules *interpreter*)))
+  "Lexical environment used for evaluation")
+
+(defun search-for-module (str)
+  (runtime-error "Could not find module ~a" str))
+
+(defun find-module (sym)
+  (aif (find-if $(eq sym (fnmodule-name $))
+                (interpreter-modules *interpreter*))
+       (cdr it)
+       (search-for-module (sym-name sym))))
+
+(defun init-env (syms &optional (parent *current-env*) (module (current-module)))
+  "Create an ENV with uninitialized value cells for each symbol in SYMS."
+  (let ((table (make-hash-table :size (min (ceiling (* 1.5 (length syms)))
+                                           10))))
+    (map nil
+         $(setf (gethash (sym-id $) table)
+                (make-cell :mutable t))
+         syms)
+    (make-env :table table
+              :module module
+              :parent parent)))
+
+(defun current-module ()
+  (env-module *current-env*))
+
+(defun set-var (name value)
+  (let ((cell (get-cell *current-env* name)))
     (cond
-      ((code-literal? c) (code-data c))
-      ((code-sym? c)
-       (cond
-         ((string= (code-sym-name c) true-sym-name) true)
-         ((string= (code-sym-name c) false-sym-name) false)
-         ((string= (code-sym-name c) null-sym-name) fnnull)
-         (t (eval-var c env interpreter))))
-      ((code-list? c) (eval-command c env interpreter))
-      (t (fn-error (code-origin c)
-                   "invalid code object passed to EVAL-CODE")))))
+      ((null cell)
+       (runtime-error "Undefined variable ~s" (sym-name name)))
 
-(defun eval-ast (a &optional (env (init-env nil)) (interpreter *global-interpreter*))
+      ((not (cell-mutable cell))
+       (runtime-error "Attempt to set immutable variable ~s"
+                      (sym-name name)))
+
+      (t (cell-mutable cell)
+         (setf (cell-value cell) value)))))
+
+
+
+(defun eval-ast (a &optional (env *current-env*) (interpreter *interpreter*))
   "Convert an AST object to code, check it syntax errors, and evaluate it."
   (let ((code (ast->code a (interpreter-symtab interpreter))))
     (validate-code code)
     (eval-code code env interpreter)))
 
-(defun find-cell (sym env interpreter)
-  "Find a value cell corresponding to a symbol."
-  (or (env-get env sym)
-      (gethash (sym-id sym) (slot-value interpreter 'globals))))
+(defun eval-code (c &optional (env *current-env*) (interpreter *interpreter*))
+  "Evaluate a code object."
+  (let ((*current-env* env)
+        (*interpreter* interpreter))
+    (handling-runtime-errors c
+      (cond
+        ((code-literal? c) (code-data c))
+        ((code-sym? c)
+         (cond
+           ((string= (code-sym-name c) true-sym-name) true)
+           ((string= (code-sym-name c) false-sym-name) false)
+           ((string= (code-sym-name c) null-sym-name) fnnull)
+           (t (eval-var c))))
+        ((code-list? c) (eval-list c))
+        (t (fn-error (code-origin c)
+                     "invalid code object passed to EVAL-CODE"))))))
 
-(defun eval-var (c env interpreter)
+(defun eval-var (c)
   "Evaluate a variable reference. Assumes CODE contains a symbol"
-  (aif (find-cell (code-data c) env interpreter)
+  (aif (get-cell *current-env* (code-data c))
        (cell-value it)
        (runtime-error "Unbound symbol: ~a" (code-sym-name c))))
 
-(defun eval-command (c env interpreter)
-  (let ((op (car (code-data c))))
-    (if (code-sym? op)
-        (let ((sym (code-data op)))
-          (aif (assoc (sym-name sym)
-                      special-op-dispatch
-                      :test #'equal)
-               (funcall (cdr it) c env interpreter)
-               (aif (get-macro sym interpreter)
-                    (runtime-error "Macros aren't implemented")
-                    (eval-funcall c env interpreter))))
-        (eval-funcall c env interpreter))))
+(defun eval-list (c)
+  (let* ((op (code-data (code-car c)))
+         (args (code-cdr c)))
+    (cond
+      ((eq op apply-sym) (eval-apply args))
+      ((eq op def-sym) (eval-def (car args) (cdr args)))
+      ((not (sym? op)) (eval-funcall c))
+      (t (aif (assoc (sym-name op)
+                     special-op-dispatch
+                     :test #'equal)
+              (funcall (cdr it) c *current-env* *interpreter*)
+              (aif (get-macro *current-env* op)
+                   (runtime-error "Macros aren't implemented")
+                   (eval-funcall c)))))))
 
-(defun eval-body (body env interpreter)
+(defun eval-body (body)
   "Evaluate a list of code objects in order, returning the last expresison."
   (cond
     ((null body) (runtime-error "No expressions in body"))
-    ((length= body 1) (eval-code (car body) env interpreter))
-    (t (eval-code (car body) env interpreter)
-       (eval-body (cdr body) env interpreter))))
+    ((length= body 1) (eval-code (car body)))
+    (t (eval-code (car body))
+       (eval-body (cdr body)))))
 
 (defun bind-params (param-list args outer-env interpreter)
   "Extend OUTER-ENV with variable bindings created by PARAM-LIST and ARGS."
@@ -258,81 +292,76 @@
                        (runtime-error "Too many arguments")
                        nil))))
       (let* ((binding-alist (bind-positional nil pos args))
-             (res (init-env (mapcar #'car binding-alist) outer-env)))
-        (mapc $(set-var (car $) (cdr $) res interpreter) binding-alist)
-        res))))
+             (*current-env* (init-env (mapcar #'car binding-alist) outer-env)))
+        (mapc $(set-var (car $) (cdr $)) binding-alist)
+        *current-env*))))
 
-(defun call-fun (fnfun args interpreter)
+(defun call-fun (fnfun args)
   (with-slots (params body closure) fnfun
     (if (functionp body)
         (funcall body args)
-        (let ((env (bind-params params args closure interpreter)))
-          (eval-body body env interpreter)))))
+        (let ((*current-env* (bind-params params args closure *interpreter*)))
+          (eval-body body)))))
 
-(defun eval-funcall (c env interpreter)
+(defun eval-funcall (c)
   "Evaluate a function call."
-  (let ((args (mapcar $(eval-code $ env interpreter)
+  (let ((args (mapcar #'eval-code
                       (code-cdr c)))
-        (op (eval-code (code-car c) env interpreter)))
+        (op (eval-code (code-car c))))
     (unless (fnfun? op)
       (runtime-error "Operator is not a function"))
-    (call-fun op args interpreter)))
+    (call-fun op args)))
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;;;; special operators
 
+(defun eval-apply (arg-exprs)
+  (let ((fun (eval-code (car arg-exprs)))
+        (args (mapcar $(eval-code $) (cdr arg-exprs))))
+    (unless (fnlist? (car (last args)))
+      (runtime-error "apply: last argument must be a list"))
+    (let ((arg-list (reduce #'cons args :from-end t)))
+      (rplacd (last arg-list) nil)
+      (call-fun fun arg-list))))
+
 ;; TODO: right now, new definitions silently clobber old ones. This behavior is useful for testing,
-;; but not dangerous in practice, so it should at least emit a warning.
-(def-op "def" (name &rest value-or-body)
-  (if (code-list? name)
-      (eval-function-def (code-data name)
-                         value-or-body
-                         env
-                         interpreter)
-      (let ((v (eval-code (car value-or-body) env interpreter)))
-        (env-add (slot-value interpreter 'globals)
-                 (code-data name)
-                 (make-cell :value v :mutable nil))
+;; but dangerous in practice, so it should at least emit a warning.
+(defun eval-def (name-or-proto value-or-body)
+  (if (code-list? name-or-proto)
+      (let ((name (code-car name-or-proto))
+            (params (code-cdr name-or-proto)))
+        (eval-function-def (code-data name) params value-or-body))
+      (let ((v (eval-code (car value-or-body))))
+        (add-global-cell *current-env*
+                         (code-data name-or-proto)
+                         (make-cell :value v :mutable nil))
         v)))
 
+;; (defun eval-def )
 
-(def-op "defvar" (name value)
-  (let ((v (eval-code value env interpreter)))
-    (env-add (slot-value interpreter 'globals)
-             (code-data name)
-             (make-cell :value v :mutable t))
-    v))
-
-(defun eval-function-def (name body env interpreter)
-  (let ((fun (make-fnfun :params (code->param-list (cdr name))
+(defun eval-function-def (name params body)
+  (let ((fun (make-fnfun :params (code->param-list params)
                          :body body
-                         :closure env)))
-    (env-add (slot-value interpreter 'globals)
-             (code-data (car name))
-             (make-cell :value fun))
+                         :closure *current-env*)))
+    (add-global-cell *current-env*
+                     name
+                     (make-cell :value fun))
     fun))
 
-(defun set-var (name value env interpreter)
-  (let ((cell (find-cell name env interpreter)))
-    (cond
-      ((null cell)
-       (runtime-error "Undefined variable ~s" (sym-name name)))
+(def-op "defvar" (name value)
+  (let ((v (eval-code value)))
+    (add-global-cell *current-env*
+                     (code-data name)
+                     (make-cell :value v :mutable t))
+    v))
 
-      ((not (cell-mutable cell))
-       (runtime-error "Attempt to set immutable variable ~s"
-                      (sym-name name)))
-
-      (t (cell-mutable cell)
-         (setf (cell-value cell) value)))))
 
 (def-op "set" (place value)
   (cond
     ((code-sym? place) (set-var (code-data place)
-                                (eval-code value env interpreter)
-                                env
-                                interpreter))
+                                (eval-code value env interpreter)))
     (t (runtime-error c "Unrecognized set place"))))
 
 (defun code-quoted-sym? (c)
@@ -378,7 +407,7 @@
 (def-op "fn" (params &rest body)
   (make-fnfun :params (code->param-list (code-data params))
               :body body
-              :closure env))
+              :closure *current-env*))
 
 (defun dollar-id-string? (str)
   ;; we have to ensure there are no superfluous leading 0's b/c then there wouldn't be one unique
@@ -472,8 +501,9 @@
                   (let ((env0 (bind-params params args env interpreter)))
                     ;; add the alternative symbol for the first arg
                     (if (>= max-id 0)
-                        (env-add env0 (fnintern "$" interpreter)
-                                 (env-get env0 (fnintern "$0" interpreter))))
+                        (add-cell env0
+                                  (fnintern "$" interpreter)
+                                  (get-cell *current-env* (fnintern "$0" interpreter))))
                     (eval-code expr env0 interpreter))))))
 
 (def-op "if" (test then else)
@@ -575,26 +605,16 @@
           (code->fnvalue code)))))
 
 
-(def-op "apply" (f &rest arg-exprs)
-  (let ((fun (eval-code f env interpreter))
-        (args (mapcar $(eval-code $ env interpreter) arg-exprs)))
-    (unless (fnlist? (car (last args)))
-      (runtime-error "apply: last argument must be a list"))
-    (let ((arg-list (reduce #'cons args :from-end t)))
-      (rplacd (last arg-list) nil)
-      (call-fun fun arg-list interpreter))))
+
 
 (def-op "do" (expr0 &rest body)
-  (eval-body (cons expr0 body) env interpreter))
+  (eval-body (cons expr0 body)))
 
 (def-op "let" (bindings &rest body)
   (let* ((binding-pairs (group 2 (code-data bindings)))
-         (new-env (init-env (mapcar $(code-data (car $))
-                                    binding-pairs)
-                            env)))
+         (*current-env* (init-env (mapcar $(code-data (car $))
+                                          binding-pairs))))
     (mapc $(set-var (code-data (car $))
-                    (eval-code (cadr $) new-env interpreter)
-                    new-env
-                    interpreter)
+                    (eval-code (cadr $)))
           binding-pairs)
-    (eval-body body new-env interpreter)))
+    (eval-body body)))

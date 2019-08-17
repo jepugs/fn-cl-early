@@ -29,13 +29,17 @@
    :quasiquote-sym :set-sym :unquote-sym :unquote-splice-sym 
    ;; sequences
    :fnlist :fnlist? :fnlist->list :fnappend :fnmapcar :fnmapcan :fnstring :string? :table :table?
-   ;; functions and local environments
+   ;; modules and environments
    :cell :make-cell :cell-value :value :cell-mutable :mutable
-   :init-env :env-get :env-add
+   :make-env :add-global-cell :add-cell :get-cell :get-macro :set-global-macro :env-module
+   :env-table
+   :fnmodule :name :vars :macros :make-fnmodule :fnmodule-name :fnmodule-vars :fnmodule-macros
+   :add-module-cell
+   ;; functions
    :param-list :make-param-list :pos :keyword :vari
    :fnfun :params :body :env :closure :param-list-syms :make-fnfun :fnfun?
    ;; general objects
-   :fntype :name :fields :fntype-name :make-fntype :fntype?
+   :fntype :fields :fntype-name :make-fntype :fntype?
    :fnobj :type :contents :make-fnobj :fnobj?
    :fnmethod :make-fnmethod :fnmethod?
    ;; pretty printing
@@ -119,7 +123,10 @@
              `(progn ,@(mapcar $`(def-sym-var ,$) lst))))
   (def-syms "apply" "case" "cond" "class-of" "def" "defclass" "defmacro" "defmethod"
             "defvar" "do" "dollar-fn" "fn" "get-field" "get" "if" "let" "quote"
-            "quasiquote" "set" "unquote" "unquote-splice"))
+            "quasiquote" "set" "unquote" "unquote-splice")
+  (defparameter wildcard-sym (symtab-intern "_" template-symtab))
+  (defparameter hash-sym (symtab-intern "#" template-symtab))
+  (defparameter amp-sym (symtab-intern "&" template-symtab)))
 
 (defun make-symtab ()
   (with-slots (next-id by-name by-id) template-symtab 
@@ -188,25 +195,52 @@
   value
   (mutable nil :read-only t))
 
+(defstruct env
+  (table (make-hash-table :test 'eql))
+  module
+  (parent nil))
+
 ;;; environments are hash tables mapping symbol IDs onto cells.
+(defstruct (fnmodule (:predicate fnmodule?) :copier)
+  (name nil :type sym)
+  (vars (make-hash-table) :type hash-table)
+  (macros (make-hash-table) :type hash-table))
 
-(defun init-env (syms &optional parent)
-  "Create a new environment with uninitialized variables corresponding to the provided symbols."
-  (let ((res (if parent
-                 (copy-ht parent)
-                 (make-hash-table :test #'eql :size (length syms)))))
-    (mapc $(setf (gethash (sym-id $) res)
-                 (make-cell :mutable t))
-          syms)
-    res))
+;; module/environment functions
+(defun add-global-cell (env sym cell)
+  "Add a new lexical cell to an environment"
+  (setf (gethash (sym-id sym) (fnmodule-vars (env-module env)))
+        cell))
 
-(defun env-get (env sym)
-  "Get a value cell from the environment. Returns NIL if no cell exists."
-  (gethash (sym-id sym) env))
+(defun add-module-cell (mod sym cell)
+  "Add a new cell to a module"
+  (setf (gethash (sym-id sym) (fnmodule-vars mod))
+        cell))
 
-(defun env-add (env sym cell)
-  "Add a new cell to an environment"
+(defun add-cell (env sym cell)
+  "Add a new cell to a module given"
   (setf (gethash (sym-id sym) env) cell))
+
+(defun get-cell (env sym)
+  "Get the CELL, if any, associated with SYM in the provided lexical environment and module. Returns
+ NIL on failure."
+  (or (gethash (sym-id sym) (env-table env))
+      (aif (env-parent env)
+           (get-cell it sym)
+           (gethash (sym-id sym) (fnmodule-vars (env-module env))))))
+
+(defun get-macro (env sym)
+  "Get the macro associated with SYM in the provided lexical environment and module."
+  (gethash (sym-id sym) (fnmodule-macros (env-module env))))
+
+(defun set-global-macro (env sym value)
+  "Set the macro associated with SYM in the provided and module."
+  (setf (gethash (sym-id sym) (fnmodule-macros (env-module env))) value))
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;;;; functions
 
 ;; function parameter object. Used to efficiently bind arguments.
 (defstruct (param-list (:predicate fnparams?))
@@ -243,10 +277,12 @@
   (contents nil :type hash-table :read-only t))
 
 (defstruct (fnmethod (:predicate fnmethod?) :copier)
-  (params)
-  ;; list of symbols indicating method names
-  (dispatch nil :type hash-table :read-only t))
+  (params nil :type param-list :read-only t)
+  (dispatch-params nil :type list :read-only t)
+  (impls nil :type hash-table :read-only t))
 
+(defun get-impl (m types)
+  (gethash types (fnmethod-impls m)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
