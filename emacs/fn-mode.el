@@ -1,7 +1,5 @@
 (provide 'fn-mode)
 
-(require 'lisp-mode)
-
 (defvar fn-mode-hook nil)
 
 (defvar fn-mode-map
@@ -11,13 +9,13 @@
 (add-to-list 'auto-mode-alist '("\\.fn\\'" . fn-mode))
 
 (defvar fn-definers
-  '("def" "defmacro" "defvar" "defvar*"))
+  '("def" "defclass" "defmacro" "defmethod" "defvar" "defvar*"))
 (defvar fn-special-operators
-  '("apply" "defmethod" "defclass" "case" "cond" "do" "if" "fn" "let" "get" "get-field" "set"
+  '("apply" "case" "cond" "do" "if" "fn" "let" "get" "get-field" "set"
     "quote" "quasiquote" "unquote" "unquote-splice" "dollar-fn")
   "Special operators that have their names highlighted")
 (defvar fn-constants
-  '("$" "$0" "$1" "$2" "$3" "$4" "$5" "&" "true" "false" "null" "_"))
+  '("true" "false" "null" "_"))
 
 ;; indentation rules for special operators
 (defvar fn-operator-indent-alist
@@ -49,7 +47,7 @@
           ;; symbol
           "\\_<\\(\\(?:\\s_\\|\\w\\)+\\)\\_>")
          '(2 font-lock-variable-name-face))
-   ;; function & macro definitions
+   ;; function, class, & macro definitions
    (list (concat
           "("
           (regexp-opt '("def" "defmacro") t)
@@ -234,7 +232,7 @@
   (let* ((is-cycle (and (listp indenter)
                         (eq (car indenter) 'cycle)))
          (is-atom (or (atom indenter) is-cycle)))
-    (cond 
+    (cond
      (is-atom
       (if is-cycle
           (nth (mod (+ index 1) (- (length indenter) 1))

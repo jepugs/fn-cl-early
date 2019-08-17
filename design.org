@@ -9,10 +9,16 @@ without sacrificing clarity.
 
 Compared to most dialects of Lisp, fn has a small number of special forms, several new syntactic
 conveniences, and a strong focus on its native object system. The object system strives to avoid
-several of CLOS, namely its feeling tacked-on to the rest of the language and being rather verbose.
+several problems with CLOS, namely its feeling tacked-on to the rest of the language (because it
+was) and being rather verbose.
 
 In addition, fn code is homoiconic like Common Lisp, allowing writing of macros in the traditional
 Lisp way, which I greatly prefer to the hygienic macros and templates of e.g. Racket or Scheme.
+However, unlike Common Lisp, where even "properly-written" macros can break in the case of an
+esoteric name collision, fn allows functions and variables to be looked up during macroexpansion in
+order to avoid such issues. Thus the goals of hygiene may be achieved without resorting to using
+special syntax objects or creating a pattern-based DSL.
+
 
 
 ** Implementation notes
@@ -43,54 +49,7 @@ to build a programming language just, for myself, that took the good parts of Co
 some modern features.
 
 
-* New parameter lists
-
-  The goal with FN's new parameter lists is to create simpler, terser syntax while maintaining
-  important features, namely keyword arguments, optional arguments, and variadic arguments. To
-  achieve this. To achieve this, we use Scheme-style optional argument syntax. Since keywords as
-  such do not exist in FN, we use quoted symbols to denote keyword arguments. Other than this
-  change, calling a function with keyword arguments works identically to how it works in Common
-  Lisp. On the parameter list side of things, keyword arguments are denoted identically to normal
-  positional or optional arguments, except that the symbol name is quoted. Thus it is possible to
-  make required keyword arguments.
-
-  Variadic arguments can be accepted using the ampersand symbol (&) followed by a variable name for
-  the list of trailing arguments.
-
-  #+BEGIN_SRC fn
-  (def (func positional-arg (optional-arg "init") ('keyword-arg "key-init"))
-    (function-body))
-  #+END_SRC
-
-  And here are some translations from Common Lisp:
-
-  #+BEGIN_SRC fn
-  (defun operator (operand0 &rest operands) ...)
-  ;; => (in FN)
-  (def (operator operand0 & operands) ...)
-
-  (defun log (x &optional (base 10)) ...)
-  ;; => lists replace &optional
-  (def (log x (base 10)) ...)
-
-  (defun sort (seq &key (test #'< test-p) (ascending t)) ...)
-  ;; => keyword arguments replace &key
-  (def (sort seq ('test <) ('ascending t)) ...)
-  #+END_SRC
-
-  #+BEGIN_SRC fn
-  ;; define a function requiring a keyword argument
-  (def (func 'req-key ('opt-key "default")) 
-    (function-body))
-
-  (func) ;=> error (needs req-key)
-  (func 'req-key 6) ;=> okay (opt-key = "default")
-  (func 'opt-key 9) ;=> error (needs req-key)
-  (func 'req-key 6 'opt-key 9) ;=> okay
-  #+END_SRC
-
-
-* Modules and Name resolution
+* Modules and Name Resolution
 
 ** Definition order
 
@@ -314,39 +273,58 @@ arguments, include "'_" (quote underscore) in the parameter list.
 #+END_SRC
 
 
-* Type System
+* Classes and Methods
 
-** Type definition
+fn is an object-oriented programming language. Every value in fn is an object, and every object is
+an instance of some class, which describes the object's structure. Polymorphism is provided via
+methods, which are callable objects that perform different actions based upon the classes of their
+arguments.
 
-New types can be defined using the ~deftype~ special form. Types are first-class objects and invoking
-~deftype~ causes creation of a global type object of the specified name. However, there is no way to
-create new type objects other than by using ~deftype~, i.e. there are no non-global types.
+** Anatomy of an Object
 
-The *fields* of an object are the key-value pairs it contains. They can be accessed with ~field-value~
-or ~@~. Objects may be instantiated by calling the type as
+Objects are key-value stores where the keys are symbols called the *fields* of the object and the
+values are arbitrary. In addition, every object has a *class* which may be accessed using the built-in
+~class-of~ operator. The class contains a list the object's fields as well as a symbol representing
+the class's name.
 
-By convention, type and protocol names begin with capital letters.
+
+** Classes
+
+Classes are defined using the ~defclass~ operator, which creates a global variable holding a ~Class~
+object. Class objects are created based upon a parameter list. This parameter list serves two
+functions. First, the variables in the parameter list denote the fields of the class. Second, the
+constructor for the class(, invoked by calling the class as an object,) uses the parameter list to
+process its arguments.
+
+By convention, type names begin with capital letters.
 
 #+BEGIN_SRC fn
-;; Type and protocol creation
-(deftype (Type-Name args...) options...)
-;; at this time no options are supported
+;; class definition
+(defclass (Class-Name & params))
 
-;; to invoke the constructor, use the type as a function
-(Type-Name args...)
+;; to invoke the constructor, use call the class like a function
+(Class-Name & args)
 
 ;; Access fields directly
-(field-value obj 'field)
-(set (field-value obj 'field) new-value)
+(get-field obj 'field)
+(set (get-field obj 'field) new-value)
 
 ;; Access fields via the generic accessors
-(@ obj 'field)
-(set (@ obj 'field) new-value)
+(get obj 'field)
+(set (get obj 'field) new-value)
 ;; or, equivalently,
 obj.field
 (set obj.field new-value)
 ;; this dot notation is preferred wherever possible
 
+;; we can even get fields from the Class itself
+(get Class-Name 'fields) ;=> params
+(get Class-Name 'name) ;=> 'Class-Name
+
+
+;; if Class were defined with defclass: (note: it wasn't and there's no constructor)
+(defclass (Class name fields constructor))
+(class-of class)
 #+END_SRC
 
 *** Future features
@@ -368,7 +346,7 @@ are multimethods). The syntax is demonstrated below.
 
 ;; Methods are implemented using def. Syntax is very similar to function definition except that
 ;; the name of the method and the dispatch types must also be specified.
-(def ((<name> <dispatch-types>) <params>)
+(def ((<name> <dispatch-classes>) <params>)
   <implementation-body>)
 
 ;;; EXAMPLE: the call method (used to treat arbitrary objects as functions)
@@ -395,18 +373,11 @@ are multimethods). The syntax is demonstrated below.
   ;; simply flip the arguments 
   (mul ct str))
 
-;; potential alternative syntax?
-(set (@ mul [String Num]) function)
-
 #+END_SRC
 
 *** Implementation
 
-Dispatch is done using hash trees. The depth of the tree is determined by the number of dispatch
-parameters. One layer is added for each dispatch parameter.
-
-In the future, dispatch behavior will likely become more complicated, as features like or, satisfies,
-and wildcard types are added.
+Dispatch is done using hash tables. The keys are lists of Class objects.
 
 
 ** Built-in types
@@ -1002,3 +973,23 @@ The first interpreter is a tree walker. The reason for this is that it is far ea
 extensions and changes to this sort of interpreter than to a VM based one.
 
 
+
+* Standard library
+
+Math module:
+
+- floor, ceil, round, frac (a.k.a fractional part)
+- sin, cos, tan, sinh, cosh, tanh, asin, acos, atan
+- exp, pow, log
+- +, -, *, /, mod
+- with-modulus (macro, locally rebinds +, -, *, and pow exprs to do modular arithmetic)
+
+
+Sequence library
+
+- (method) append
+- (method) get-iter
+- (class) Iter
+- map, foldl, foldr
+- (replace subseq new-place seq)
+- (split subseq seq)
