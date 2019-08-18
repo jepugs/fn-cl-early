@@ -994,3 +994,115 @@ Sequence library:
 - map, foldl, foldr
 - (replace subseq new-place seq)
 - (split subseq seq)
+
+* Comprehensive language description
+
+This section completely (and formal-ish-ly) describes fn as it is now. It is a work in progress, but
+it's completion is a priority.
+
+** Syntax
+
+*** Literals
+
+*** Symbols
+
+*** Lists
+
+*** Other syntax
+
+
+** Special operators
+
+Below is a complete list of fn's special operators. Operators marked done are fully documented below
+and implemented in the interpreter
+
+*** DONE ~apply~
+
+#+BEGIN_SRC fn
+;;; syntax - apply
+(apply <fun> <args*> <arg-list>)
+;;; where
+;; <fun> is a function
+;; <args> 0 or more arguments to be passed to <fun>
+;; <arg-list> a list of arguments to be passed to <fun>
+#+END_SRC
+
+~apply~ calls a function with elements of the provided list as arguments. If <args*> are specified
+before <arg-list> then those arguments are prepended to the arg-list before calling.
+
+*** TODO ~case~
+
+~case~ behavior is not yet specified.
+
+*** DONE ~class-of~
+
+#+BEGIN_SRC fn
+;;; syntax - class-of
+(class-of <obj>)
+;;; where
+;; <obj> is an arbitrary object
+#+END_SRC
+
+~class-of~ gets the class of an object.
+
+*** DONE ~def~
+
+#+BEGIN_SRC fn
+;;; syntax - def
+(def <var> <value>)                          ; var def
+(def (<var> <params*>) <body*>)              ; function def
+(def ((<method> <types*>) <params>) <body*>) ; method def
+;;; where
+;; <var> is an unbound symbol
+;; <value> is an expression
+;; <params*> is a parameter list
+;; <types*> is a non-empty list of symbols naming classes
+;; <body*> is a function body
+;; <method> is a symbol naming a global method
+#+END_SRC
+
+~def~ has three forms that each perform a different action. The first form defines an immutable global
+variable with the specified value. The second form creates a function named <var> with the provided
+params and body. The third form defines a method implementation of <method> on the provided types.
+
+*** TODO ~defclass~
+
+*** TODO ~defvar~
+
+*** TODO ~do~
+
+*** TODO ~dollar-fn~
+
+*** TODO ~fn~
+
+*** TODO ~get~
+
+*** TODO ~get-field~
+
+*** TODO ~if~
+
+*** TODO ~import~
+
+*** TODO ~let~
+
+*** TODO ~quasiquote~
+
+*** TODO ~quote~
+
+*** TODO ~set~
+
+*** TODO ~unquote~
+
+*** TODO ~unquote-splice~
+
+
+** Built-in values
+
+*** Classes
+
+*** Functions
+
+*** Methods
+
+*** Macros
+
