@@ -10,6 +10,21 @@ include:
 - powerful metaprogramming facilities inspired by Common Lisp
 - many parentheses
 
+## Building fn
+
+In order to build fn, you must have [autoconf](www.gnu.org/software/autoconf/),
+[make](www.gnu.org/software/make/), and [SBCL](sbcl.org/) installed on your computer.
+
+fn may be built by running the following commands in the source directory:
+
+```
+autoconf
+./configure
+make
+```
+
+fn has only been tested on 64-bit Linux operating systems.
+
 ## Development status and plans
 
 Version 0 of fn is currently in development. At the time of writing, fn should be considered
@@ -18,7 +33,8 @@ incomplete software and should probably not be used for any purpose.
 At the moment, the core language specification is very unstable and not fully documented. Version 0
 will be released once the core language is stable and fully realized via an unoptimized tree-walking
 interpreter. The version 0 release series will focus on improving the performance and error
-reporting of the tree-walking while expanding the standard library.
+reporting of the interpreter while expanding the standard library. Breaking changes to the core
+language will continue to happen during this release series.
 
 A version 1.0 release is far away down the line, and will involve writing a high-performance VM in C++.
 
