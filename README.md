@@ -15,8 +15,8 @@ A long, rambling, and incomplete description of fn is in the file [design.org](.
 
 ## Building fn
 
-In order to build fn, you must have [autoconf](www.gnu.org/software/autoconf/),
-[make](www.gnu.org/software/make/), and [SBCL](sbcl.org/) installed on your computer.
+In order to build fn, you must have [autoconf](http://www.gnu.org/software/autoconf/),
+[make](http://www.gnu.org/software/make/), and [SBCL](http://sbcl.org/) installed on your computer.
 
 fn may be built by running the following commands in the source directory:
 
