@@ -10,6 +10,18 @@ include:
 - powerful metaprogramming facilities inspired by Common Lisp
 - many parentheses
 
+## Development status and plans
+
+Version 0 of fn is currently in development. At the time of writing, fn should be considered
+incomplete software and should probably not be used for any purpose.
+
+At the moment, the core language specification is very unstable and not fully documented. Version 0
+will be released once the core language is stable and fully realized via an unoptimized tree-walking
+interpreter. The version 0 release series will focus on improving the performance and error
+reporting of the tree-walking while expanding the standard library.
+
+A version 1.0 release is far away down the line, and will involve writing a high-performance VM in C++.
+
 
 # Language Basics
 
