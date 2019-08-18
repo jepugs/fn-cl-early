@@ -104,6 +104,7 @@
     (modify-syntax-entry ?* "w" stab)
     (modify-syntax-entry ?. "_" stab)
     (modify-syntax-entry ?\# "w" stab)
+    (modify-syntax-entry ?? "_" stab)
     ;; delimiters
     (modify-syntax-entry ?\( "()" stab)
     (modify-syntax-entry ?\) ")(" stab)

@@ -985,11 +985,12 @@ Math module:
 - with-modulus (macro, locally rebinds +, -, *, and pow exprs to do modular arithmetic)
 
 
-Sequence library
+Sequence library:
 
 - (method) append
 - (method) get-iter
 - (class) Iter
+- (class) Lazy-List
 - map, foldl, foldr
 - (replace subseq new-place seq)
 - (split subseq seq)
