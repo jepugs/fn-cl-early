@@ -380,9 +380,9 @@ are multimethods). The syntax is demonstrated below.
 Dispatch is done using hash tables. The keys are lists of Class objects.
 
 
-** Built-in types
+** Built-in classes
 
-The following types are built into fn.
+The following classes are built into fn.
 
 *Atomic types*
 - Symbol :: symbol
@@ -391,88 +391,159 @@ The following types are built into fn.
 - Num :: 64-bit floating-point number
 
 *Structure types*
+- Class :: the type of types
 - List :: singley-linked list
-- Table :: general-purpose hash table
-- Array :: generic one-dimensional vector
-- Type :: the type of types
 - String :: character string
 
-Foreign data structures and bit array types will be added in the future.
+(Hash-)tables, arrays, foreign data structures and byte arrays are planned for the future.
 
 
-** Misc Type Functions
+* Comprehensive language description
 
-Use ~(type-of obj)~ to get the type of an object. This returns a symbol equal to the name of the class
-of obj. I.e., ~(type-of obj)~ is equivalent to ~(get (class-of obj) 'name)~.
+This section completely (and formal-ish-ly) describes fn as it is now. It is a work in progress, but
+it's completion is a priority.
 
-The slots of an object can be accessed using ~get~.
+** Syntax
+*** Literals
+
+*** Symbols
+
+*** Lists
+
+*** Other syntax
 
 
-* Version 0 Spec
+** Special operators
+
+Below is a complete list of fn's special operators. Operators marked done are fully documented below
+and implemented in the interpreter
+
+*** DONE ~apply~
+
+#+BEGIN_SRC fn
+;;; syntax - apply
+(apply <fun> <args*> <arg-list>)
+;;; where
+;; <fun> is a function
+;; <args> 0 or more arguments to be passed to <fun>
+;; <arg-list> a list of arguments to be passed to <fun>
+#+END_SRC
+
+~apply~ calls a function with elements of the provided list as arguments. If <args*> are specified
+before <arg-list> then those arguments are prepended to the arg-list before calling.
+
+*** TODO ~case~
+
+~case~ behavior is not yet specified.
+
+*** DONE ~class-of~
+
+#+BEGIN_SRC fn
+;;; syntax - class-of
+(class-of <obj>)
+;;; where
+;; <obj> is an arbitrary object
+#+END_SRC
+
+~class-of~ gets the class of an object.
+
+*** DONE ~def~
+
+#+BEGIN_SRC fn
+;;; syntax - def
+(def <var> <value>)                          ; var def
+(def (<var> <params*>) <body*>)              ; function def
+(def ((<method> <types*>) <params>) <body*>) ; method def
+;;; where
+;; <var> is an unbound symbol
+;; <value> is an expression
+;; <params*> is a parameter list
+;; <types*> is a non-empty list of symbols naming classes
+;; <body*> is a function body
+;; <method> is a symbol naming a global method
+#+END_SRC
+
+~def~ has three forms that each perform a different action. The first form defines an immutable global
+variable with the specified value. The second form creates a function named <var> with the provided
+params and body. The third form defines a method implementation of <method> on the provided types.
+
+*** TODO ~defclass~
+
+*** TODO ~defvar~
+
+*** TODO ~do~
+
+*** TODO ~dollar-fn~
+
+*** TODO ~fn~
+
+*** TODO ~get~
+
+*** TODO ~get-field~
+
+*** TODO ~if~
+
+*** TODO ~import~
+
+*** TODO ~let~
+
+*** TODO ~quasiquote~
+
+*** TODO ~quote~
+
+*** TODO ~set~
+
+*** TODO ~unquote~
+
+*** TODO ~unquote-splice~
+
+
+** Built-in values
+
+*** Classes
+
+*** Functions
+
+*** Methods
+
+*** Macros
+
+
+* Misc Notes and Ideas
+
+This section is a bunch of garbage to help me remember things. I don't recommend trying to read
+this.
+
+** Standard library
+
+Math module:
+
+- floor, ceil, round, frac (a.k.a fractional part)
+- sin, cos, tan, sinh, cosh, tanh, asin, acos, atan
+- exp, pow, log
+- +, -, *, /, mod
+- with-modulus (macro, locally rebinds +, -, *, and pow exprs to do modular arithmetic)
+
+
+Sequence library:
+
+- (method) append
+- (method) get-iter
+- (class) Iter
+- (class) Lazy-List
+- map, foldl, foldr
+- (replace subseq new-place seq)
+- (split subseq seq)
+
+
+
+** Version 0 Spec
 
 If anyone other than me ever tries to read this, I'm sorry. This is a "complete" specification of
 version 0 of the fn programming language (i.e. complete enough for me, the language designer, to
 remember the decisions I've made so far).
 
-** Core language cheat sheet
-
-This sample code contains every special form in fn.
-
-#+BEGIN_SRC fn
-;; variable definition
-(def var value)
-(def (fun param*) body*)
-(def ((method dispatch-types) param*) body*)
-(defvar var value)
-
-;; type system
-(defclass (Type arg*))
-(defmethod ((method-name type-var*) param*))
-
-;; get/set
-(get obj field)
-(@ obj key)
-(set place value)
-
-;; function creation
-(fn (x) (+ x 2))
-$(+ $ 2)
-(dollar-fn (+ $ 2))
-
-;; control flow
-(apply fun lst)
-(do expr*)
-(let (var1 val1
-      var2 val2
-      (fun-var arg*)
-        (body))
-  expr*)
-(if condition
-    then-expr
-    else-expr)
-(cond
-  condition1 
-    expr1
-  condition2 
-    expr2)
-(case obj
-  pattern1
-    expr1
-  pattern2
-    expr2)
-
-;; code as data/macros
-(defmacro (name arg*)
-  macro-body)
-'x
-(quote x)
-`(a b ,(+ 2 4))
-(quasiquote (a b (unquote (+ 2 4))))
-
-#+END_SRC
-
-
-** Flow control
+*** Flow control
 
 - cond
 - do
@@ -526,119 +597,13 @@ binding specs
 #+END_SRC
 
 
-** Function creation
-
-- fn
-- $ (dollar sign syntax)
-
-
-** Type System 
+*** Type System 
 
 Version 0 will implement the complete type system as described in Type System at the top level of
 this document.
 
 
-** Generic accessors
-
-*** @
-
-The generic getter is ~@~. It gets values from objects given some key.
-
-#+BEGIN_SRC fn
-;; function signature for @
-(defn @ (object key0 & keys)
-  ...)
-#+END_SRC fn
-
-When multiple keys are passed as arguments, each successive key is used to access the value from the
-previous key. E.g. ~(@ obj key1 key2)~ is equivalent to ~(@ (@ obj key1) key2)~.
-
-The default behavior for ~@~ on new types is to act like ~slot-value~.
-
-
-*** dot notation
-
-The dot (.) is used as a shorthand for ~@~ when the object is a variable and the key is a symbol. For
-example, the following two expressions are equivalent:
-
-#+BEGIN_SRC fn
-;; 1.
-object.slot
-;; 2.
-(@ object 'slot)
-#+END_SRC
-
-In fact, the reader converts the former expression to the latter before evaluation.
-
-Multiple dots can also be used to supply more keys:
-
-#+BEGIN_SRC fn
-object.slot1.slot2
-;; is equivalent to
-(@ object 'slot1 'slot2)
-#+END_SRC
-
-
-*** Default Callable (Potential alternative to dot notation)
-
-The dot is an attractive syntax because it allows tree descent with the addition of only one
-character of syntax per depth. An alternative syntax would be achieved by giving all objects a
-default Callable protocol implementation that invokes ~@~ on the object with the specified arguments.
-E.g:
-
-;; this
-object.key.key2.key3
-;; would be replaced by this
-(object 'key1 'key2 'key3)
-
-I guess we could also do both, but that seems like overkill. I'm leaning towards keeping dot notation.
-
-
-*** set
-
-The generic setter is ~set~.
-
-#+BEGIN_SRC fn
-(defmacro set (place value)
-  ...)
-
-;; define a mutable variable
-(defvar x 27)
-x
-;;=> 27
-(set x 32)
-x
-;;=> 32
-
-;; mutate the field of an object
-(set obj.slot 'funk)
-;; equivalent w/o dot notation
-(set (@ obj slot) 'funk)
-#+END_SRC
-
-The place can be a variable name, in which case the variable is mutated. It may also be an ~@~ form,
-which will invoke the generic
-
-
-** Definition
-
-These are all the variable definition facilities in fn
-
-#+BEGIN_SRC fn
-;; define a constant variable
-(def VAR VALUE "Doc string")
-;; define a mutable variable
-(defvar VAR VALUE "Doc string")
-;; define a function
-(defn VAR (ARG-LIST...)
-  "Doc string"
-  (options FUNCTION-OPTIONS...)
-  FUNCTION-BODY) 
-
-#+END_SRC
-
-
-** Macros
+*** Macros
 
 #+BEGIN_SRC fn
 ;; define a macro
@@ -656,45 +621,7 @@ variables to be accessed from macros without needing to include them as literals
 possibly return a pointer object that unambiguous denoted the variable being referenced.
 
 
-** Pattern matching
-
-Will not be implemented with the first version
-
-
-** Standard Library
-
-- @
-- +,-,*,/
-- add,sub,mul,div (corresp. to Add, Sub, Mul, Div protocols)
-- call (w/ Callable protocol)
-- get (w/ Get protocol, used by @)
-- print
-- random
-- set (macro)
-- slot-value
-- type-of
-
-
-** Complete list of special operators
-
-- apply
-- case
-- cond
-- def
-- defimpl
-- defmacro
-- defn
-- defproto
-- defvar
-- do
-- fn
-- let
-- quote
-- quasiquote
-- unquote
-
-
-** Syntax
+*** Syntax
 
 Syntax is standard lisp parenthesized prefix notation. The following are all the special syntax
 characters:
@@ -705,7 +632,7 @@ all other non-whitespace characters are symbol constituents, that is, they are p
 as symbols or numbers.
 
 
-*** Delimiters
+**** Delimiters
 
 In typical lisp fashion, () are the delimiters denoting lists. In addition, [] and {} are matched
 delimiters for reading lists and dicts. In fact, they are converted by the reader.
@@ -718,36 +645,34 @@ Also, "" reads UTF-8 strings. It uses C/C++ escape sequences because those are b
 ones and support Unicodes. Get over it.
 
 
-*** Comments
+**** Comments
 
 There are no multi-line comments in fn. Only line-end comments, started by semicolons, are
 supported.
 
 
-*** Dollar sign
+**** Dollar sign
 
 See function creation.
 
 
-*** Quotation
+**** Quotation
 
 Normal quote works as it usually does in Lisp. Quasiquote works the same but lacks a destructive
 splice.
 
 
-*** Escaping
+**** Escaping
 
 Escaping is when a backslash (/) character is placed in front of another character, thereby turning it
 into a symbol constituent.. Any character can be escaped in any context except for within a string, (where string
 escaping rules apply instead).
 
 
-*** Dot notation
+**** Dot notation
 
 See Generic Accessors
 
-
-* Misc Notes and Ideas
 
 ** Important idea: global pointers
 
@@ -940,6 +865,7 @@ to 62-bit precision by dropping the two rightmost digit, allowing use of x87 har
 passing around of numbers, etc, much more efficient. A downside of this approach is that it would
 give us less than the maximum 256 possible type tags that exist right now.
 
+
 ** Alt. Defn syntax
 
 #+BEGIN_SRC fn
@@ -966,143 +892,4 @@ i.e.
 
 #+END_SRC
 
-
-* Tree Walker
-
-The first interpreter is a tree walker. The reason for this is that it is far easier to make
-extensions and changes to this sort of interpreter than to a VM based one.
-
-
-
-* Standard library
-
-Math module:
-
-- floor, ceil, round, frac (a.k.a fractional part)
-- sin, cos, tan, sinh, cosh, tanh, asin, acos, atan
-- exp, pow, log
-- +, -, *, /, mod
-- with-modulus (macro, locally rebinds +, -, *, and pow exprs to do modular arithmetic)
-
-
-Sequence library:
-
-- (method) append
-- (method) get-iter
-- (class) Iter
-- (class) Lazy-List
-- map, foldl, foldr
-- (replace subseq new-place seq)
-- (split subseq seq)
-
-* Comprehensive language description
-
-This section completely (and formal-ish-ly) describes fn as it is now. It is a work in progress, but
-it's completion is a priority.
-
-** Syntax
-
-*** Literals
-
-*** Symbols
-
-*** Lists
-
-*** Other syntax
-
-
-** Special operators
-
-Below is a complete list of fn's special operators. Operators marked done are fully documented below
-and implemented in the interpreter
-
-*** DONE ~apply~
-
-#+BEGIN_SRC fn
-;;; syntax - apply
-(apply <fun> <args*> <arg-list>)
-;;; where
-;; <fun> is a function
-;; <args> 0 or more arguments to be passed to <fun>
-;; <arg-list> a list of arguments to be passed to <fun>
-#+END_SRC
-
-~apply~ calls a function with elements of the provided list as arguments. If <args*> are specified
-before <arg-list> then those arguments are prepended to the arg-list before calling.
-
-*** TODO ~case~
-
-~case~ behavior is not yet specified.
-
-*** DONE ~class-of~
-
-#+BEGIN_SRC fn
-;;; syntax - class-of
-(class-of <obj>)
-;;; where
-;; <obj> is an arbitrary object
-#+END_SRC
-
-~class-of~ gets the class of an object.
-
-*** DONE ~def~
-
-#+BEGIN_SRC fn
-;;; syntax - def
-(def <var> <value>)                          ; var def
-(def (<var> <params*>) <body*>)              ; function def
-(def ((<method> <types*>) <params>) <body*>) ; method def
-;;; where
-;; <var> is an unbound symbol
-;; <value> is an expression
-;; <params*> is a parameter list
-;; <types*> is a non-empty list of symbols naming classes
-;; <body*> is a function body
-;; <method> is a symbol naming a global method
-#+END_SRC
-
-~def~ has three forms that each perform a different action. The first form defines an immutable global
-variable with the specified value. The second form creates a function named <var> with the provided
-params and body. The third form defines a method implementation of <method> on the provided types.
-
-*** TODO ~defclass~
-
-*** TODO ~defvar~
-
-*** TODO ~do~
-
-*** TODO ~dollar-fn~
-
-*** TODO ~fn~
-
-*** TODO ~get~
-
-*** TODO ~get-field~
-
-*** TODO ~if~
-
-*** TODO ~import~
-
-*** TODO ~let~
-
-*** TODO ~quasiquote~
-
-*** TODO ~quote~
-
-*** TODO ~set~
-
-*** TODO ~unquote~
-
-*** TODO ~unquote-splice~
-
-
-** Built-in values
-
-*** Classes
-
-*** Functions
-
-*** Methods
-
-*** Macros
 

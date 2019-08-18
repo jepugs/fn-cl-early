@@ -10,6 +10,9 @@ include:
 - powerful metaprogramming facilities inspired by Common Lisp
 - many parentheses
 
+A long, rambling, and incomplete description of fn is in the file [design.org](./design.org).
+
+
 ## Building fn
 
 In order to build fn, you must have [autoconf](www.gnu.org/software/autoconf/),
@@ -25,28 +28,39 @@ make
 
 fn has only been tested on 64-bit Linux operating systems.
 
+
 ## Development status and plans
 
 Version 0 of fn is currently in development. At the time of writing, fn should be considered
 incomplete software and should probably not be used for any purpose.
 
-At the moment, the core language specification is very unstable and not fully documented. Version 0
-will be released once the core language is stable and fully realized via an unoptimized tree-walking
-interpreter. The version 0 release series will focus on improving the performance and error
-reporting of the interpreter while expanding the standard library. Breaking changes to the core
-language will continue to happen during this release series.
+fn is a personal project, but I take it very seriously. I aim to make the language and tools
+professional-grade programming language.
 
-A version 1.0 release is far away down the line, and will involve writing a high-performance VM in C++.
+I am in the process of writing thorough unit tests for the interpreter. I'm also constantly working
+on cleaning up the code base, as thhe rapid pace of development has led to some inconsistencies.
+
+At the moment, the core language specification is nearly stable, but it is not fully documented.
+Version 0 will be released once the core language is stable and fully realized via an unoptimized
+tree-walking interpreter. The version 0 release series will focus on improving the performance and
+error reporting of the interpreter while expanding the standard library. Breaking changes to the
+core language will continue to happen during this release series.
+
+A version 1.0 release is far away down the line, and will involve writing a high-performance VM in
+C++.
 
 
 # Language Basics
+
+This section briefly introduces fn and highlights a few of its features. It is by no means a
+complete guide to the language.
 
 ## Syntax
 
 fn is a member of the Lisp family, and as such has very simple syntax.
 
-There are two basic forms of expressions in fn: **atoms** and **commands**. An **atom** is a single
-value, such as a variable name, a number, a string, or a boolean. A **command** is a sequence of
+There are two basic forms of expressions in fn: **atoms** and **lists**. An **atom** is a single
+value, such as a variable name, a number, a string, or a boolean. A **list** is a sequence of
 expressions within a pair of parentheses. The first element in the sequence is called the
 **operator** and the others are the **arguments**.
 
@@ -63,22 +77,22 @@ true
 false
 null
 
-;; every command has this form:
+;; every list has this form:
 (operator argument1 argument2 and-so-on)
 
-;; example commands using built-in arithmetic operators
+;; example lists using built-in arithmetic operators
 (+ 3 4)   ; = 7
 (/ 8 2)   ; = 4
 ;; arithmetic operators accept arbitrarily many arguments
 (+ 1 2 3) ; = 6
-;; commands can be nested
+;; lists can be nested
 (* (- 2 4) 17) ; = -34
 
-;; commands may also have side effects
+;; lists may also have side effects
 (print "Hello, world!") ; prints to STDOUT
 ```
 
-All other syntax is really just sugar; in fact, the interpreter converts all expressions to command
+All other syntax is really just sugar; in fact, the interpreter converts all expressions to list
 and atom syntax before evaluation. For example, fn provides dot syntax which expands as follows:
 
 ```
@@ -96,7 +110,7 @@ fn's control flow primitives are the special operators `do`, `if`, `cond`, and `
 ;; do evaluates a series of expressions in order
 (do
   (print "What's up, world?")
-  ;; the String command creates a string from its arguments
+  ;; String creates a string from its arguments
   (print (String "Two plus two is " (+ 2 2)))
   (print "Goodbye, globe!"))
 
@@ -167,26 +181,3 @@ This section is a work in progress.
 (reduce $(+ (* $0 10) $1) [4 0 3 2])
 ;; => 4032
 ```
-
-
-## Stolen goods
-
-Most of the ideas in this programming language are not original. Notably, I owe a lot of language
-and library features to Clojure, Scheme, Common Lisp, Haskell, Python, and Javascript. My main
-contribution is bringing these stolen goods together under a coherent interface.
-
-
-## A Note to the Reader: Proceed with Caution
-
-This is a personal project to make a programming language. All the source
-contained herein comes with no guarantee of quality (although I try my best!),
-no support (but leave a comment if you have one!), and a very, very unstable
-interface.
-
-No effort has been made to make this code readable to other people, in case the
-fact that I'm using Common Lisp wasn't a giveaway. No effort has been or will be
-made to implement features or libraries that I, the despot, do not personally
-desire. No effort has been made to make this code portable. It works on with
-SBCL on my computers and possibly nowhere else because I'm not about to test it.
-I do not plan on accepting any commits from anyone else. That said, feel free to
-use the code as you want, as long as you abide the GPLv3 license.
