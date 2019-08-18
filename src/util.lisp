@@ -394,6 +394,3 @@ contents of the table."
           :module ,(package-name *package*)
           :origin ,origin
           :message (format nil ,fmt-string ,@fmt-args)))
-
-;; (defun fn-error (module message &optional place)
-;;   (error 'fn-error :module module :place place :message message))

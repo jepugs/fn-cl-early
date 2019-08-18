@@ -54,10 +54,7 @@
    :fnobj :class :contents :make-fnobj :fnobj-class :fnobj-contents :fnobj?
    :fnmethod :make-fnmethod :fnmethod?
    ;; pretty printing
-   :->string :fnprint :fnprintln :->code-string :fnprint-code :fnprintln-code
-   ;; quoting
-   ;;:bracket-sym-name :dollar-sym-name :dot-sym-name :quot-sym-name
-   :ast->fnval :fnval->ast))
+   :->string :fnprint :fnprintln :->code-string :fnprint-code :fnprintln-code))
 
 (in-package :fn.values)
 
@@ -187,9 +184,11 @@
 (defun fnlist? (x)
   (or (empty? x) (consp x)))
 (defun fnlist->list (x)
-  (let ((res (copy-list x)))
-    (rplacd (last res) nil)
-    res))
+  (if (empty? x)
+      nil
+      (let ((res (copy-list x)))
+        (rplacd (last res) nil)
+        res)))
 (defun fnlist-length (x)
   (rlambda (acc lst) (0 x)
     (if (empty? lst)

@@ -249,18 +249,44 @@
       ((eq op apply-sym) (eval-apply args))
       ((eq op class-of-sym) (eval-class-of (car args)))
       ((eq op def-sym) (eval-def (car args) (cdr args)))
-      ((eq op defclass-sym) (eval-defclass (code-data (code-car (car args)))
-                                           (code-cdr (car args))))
-      ((eq op get-sym) (eval-get (car args)
-                                 (cdr args)))
+      ((eq op defclass-sym)
+       (eval-defclass (code-data (code-car (car args)))
+                      (code-cdr (car args))))
+      ((eq op defmacro-sym)
+       (eval-defmacro (code-data (code-car (car args)))
+                      (code-cdr (car args))
+                      (cdr args)))
+      ((eq op get-sym)
+       (eval-get (car args)
+                 (cdr args)))
       ((not (sym? op)) (eval-funcall c))
-      (t (aif (assoc (sym-name op)
+      (t
+       (aif (assoc (sym-name op)
                      special-op-dispatch
                      :test #'equal)
               (funcall (cdr it) c *current-env* *interpreter*)
               (aif (get-macro *current-env* op)
-                   (runtime-error "Macros aren't implemented")
+                   (let ((code (expand-macro it c)))
+                     (validate-code code)
+                     (eval-code code))
                    (eval-funcall c)))))))
+
+(defun expand-macro (macro-fun c)
+  (with-slots (filename line column) (code-origin c)
+    ;; TODO: change so that the origin looks better with dot syntax
+    (let* ((origin (make-origin :filename filename
+                                :line line
+                                :column column
+                                :macro (->string (code-data (code-car c)))))
+           (args (mapcar #'code->fnvalue (code-cdr c))))
+      (fnvalue->code (call-fun macro-fun args) origin))))
+
+(defun fnvalue->code (v origin)
+  (make-code origin
+             (if (fnlist? v)
+                 (mapcar $(fnvalue->code $ origin)
+                         (fnlist->list v))
+                 v)))
 
 (defun eval-body (body)
   "Evaluate a list of code objects in order, returning the last expresison."
@@ -517,6 +543,14 @@
   (aif (gethash (sym-id key) (fnobj-contents obj))
        (cell-value it)
        (runtime-error "object has no field named ~a" (->string key))))
+
+(defun eval-defmacro (name params-code body-code)
+  (set-global-macro *current-env*
+                    name
+                    (make-fnfun :params (code->param-list params-code)
+                                :body body-code
+                                :closure *current-env*))
+  fnnull)
 
 (def-op "set" (place value)
   (cond
