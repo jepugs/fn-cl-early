@@ -325,6 +325,7 @@
   (validate-params o (code-cdr (car args)) "in defmacro parameters: ")
   (validate-exprs (cdr args)))
 
+;; TODO: check that all defmethod dispatch params appear as positional arguments in params
 (defun validate-defmethod (o args)
   (check-arg-length= o args 1 "defmethod")
   (let ((proto (car args)))

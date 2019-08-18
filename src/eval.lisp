@@ -43,7 +43,12 @@
 
   (defmacro runtime-error (format-string &rest format-args)
     `(error 'runtime-error
-            :message (format nil ,format-string ,@format-args))))
+            :message (format nil ,format-string ,@format-args)))
+
+  ;; one day this will be implemented
+  (defmacro runtime-warning (format-string &rest format-args)
+    (declare (ignore format-string format-args))
+    nil))
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -256,6 +261,12 @@
        (eval-defmacro (code-data (code-car (car args)))
                       (code-cdr (car args))
                       (cdr args)))
+      ((eq op defmethod-sym)
+       (eval-defmethod (code-data (code-car (code-car (car args))))
+                       (code-cdr (code-car (car args)))
+                       (code-cdr (car args))))
+      ((eq op dollar-fn-sym)
+       (eval-dollar-fn (car args)))
       ((eq op get-sym)
        (eval-get (car args)
                  (cdr args)))
@@ -367,51 +378,80 @@
         (let ((*current-env* (bind-params params args closure)))
           (eval-body body)))))
 
+(defun call-fnmethod (m args)
+  (with-slots (params dispatch-params default-impl) m
+    (let* ((new-env (bind-params params args *current-env*))
+           (types (mapcar $(get-class-of (cell-value (get-cell new-env $)))
+                          dispatch-params)))
+      (aif (get-impl m types)
+           (call-fun it args)
+           (if default-impl
+               (call-fun default-impl args)
+               (runtime-error "Method not implemented on types (~{~a~^ ~})."
+                              (mapcar $(->string (fnclass-name $)) types)))))))
+
+(defun call-obj (op args)
+  (cond
+    ((fnfun? op) (call-fun op args))
+    ((fnmethod? op) (call-fnmethod op args))
+    ((fnclass? op) (call-fun (fnclass-constructor op) args))
+    (t (runtime-error "Operator is not a callable object"))))
+
 (defun eval-funcall (c)
   "Evaluate a function call."
   (let ((op (eval-code (code-car c)))
         (args (mapcar #'eval-code
                       (code-cdr c))))
-    (cond
-      ((fnfun? op) (call-fun op args))
-      ((fnmethod? op) (call-method op args))
-      ((fnclass? op) (call-fun (fnclass-constructor op) args))
-      (t (runtime-error "Operator is not a callable object")))))
+    (call-obj op args)))
 
+(defun safe-add-global (sym value &optional mutable)
+  "Add a global variable without trampling any definitions."
+  (aif (get-module-cell (current-module) sym)
+       (if (cell-mutable it)
+           (progn
+             (runtime-warning "Redefining variable ~a"
+                              (->string sym))
+             (setf (cell-value it) value))
+           (runtime-error "Attempt to redefine immutable variable ~a"
+                          (->string sym)))
+       (add-global-cell *current-env* sym (make-cell :value value
+                                                     :mutable mutable))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;;;; special operators
 
 (defun eval-apply (arg-exprs)
-  (let ((fun (eval-code (car arg-exprs)))
+  (let ((op (eval-code (car arg-exprs)))
         (args (mapcar $(eval-code $) (cdr arg-exprs))))
     (unless (fnlist? (car (last args)))
       (runtime-error "apply: last argument must be a list"))
     (let ((arg-list (reduce #'cons args :from-end t)))
       (rplacd (last arg-list) nil)
-      (call-fun fun arg-list))))
+      (call-obj op arg-list))))
 
-(defun eval-class-of (arg)
-  (let ((v (eval-code arg)))
-    (cond ((or (true? v) (false? v)) (class-by-name (fnintern "Bool")))
-          ((fnclass? v) (class-by-name (fnintern "Class")))
-          ((fnfun? v) (class-by-name (fnintern "Function")))
-          ((fnlist? v) (class-by-name (fnintern "List")))
-          ((fnmodule? v) (class-by-name (fnintern "Module")))
-          ((fnmethod? v) (class-by-name (fnintern "Method")))
-          ((fnnull? v) (class-by-name (fnintern "Null")))
-          ((num? v) (class-by-name (fnintern "Num")))
-          ((string? v) (class-by-name (fnintern "String")))
-          ((fnobj? v) (fnobj-class v))
-          (t (runtime-error "object has unknown class")))))
+(defun eval-class-of (arg-code)
+  (or (get-class-of (eval-code arg-code))
+      (runtime-error "object has unknown class")))
+
+(defun get-class-of (v)
+  (cond ((or (true? v) (false? v)) (class-by-name (fnintern "Bool")))
+        ((fnclass? v) (class-by-name (fnintern "Class")))
+        ((fnfun? v) (class-by-name (fnintern "Function")))
+        ((fnlist? v) (class-by-name (fnintern "List")))
+        ((fnmodule? v) (class-by-name (fnintern "Module")))
+        ((fnmethod? v) (class-by-name (fnintern "Method")))
+        ((fnnull? v) (class-by-name (fnintern "Null")))
+        ((num? v) (class-by-name (fnintern "Num")))
+        ((string? v) (class-by-name (fnintern "String")))
+        ((fnobj? v) (fnobj-class v))))
 
 (defun class-by-name (sym)
   (aif (get-module-cell (current-module) sym)
        (if (fnclass? (cell-value it))
            (cell-value it)
-           (runtime-error "Something is wrong; ~a is not a class object!" (->string sym)))
-       (runtime-error "Something is wrong; ~a is not a class object!" (->string sym))))
+           (runtime-error "not a class: ~a" (->string sym)))
+       (runtime-error "no such class: ~a" (->string sym))))
 
 ;; TODO: right now, new definitions silently clobber old ones. This behavior is useful for testing,
 ;; but dangerous in practice, so it should at least emit a warning.
@@ -426,30 +466,50 @@
                              value-or-body)
             (eval-function-def (code-data name) params value-or-body)))
       (let ((v (eval-code (car value-or-body))))
-        (add-global-cell *current-env*
-                         (code-data name-or-proto)
-                         (make-cell :value v :mutable nil))
+        (safe-add-global (code-data name-or-proto) v)
         v)))
 
 (defun eval-function-def (name params body)
   (let ((fun (make-fnfun :params (code->param-list params)
                          :body body
                          :closure *current-env*)))
-    (add-global-cell *current-env*
-                     name
-                     (make-cell :value fun))
+    (safe-add-global name fun)
     fun))
 
-(defun eval-method-def (name classes params body)
-  (declare (ignore name classes params body))
-  (runtime-error "method def not implemented"))
+;; TODO: write this function lol
+(defun params-eqv (p1 p2)
+  (declare (ignore p1 p2))
+  t)
+
+(defun eval-method-def (name class-syms params body)
+  (let* ((cell (get-cell *current-env* name))
+         (m (if cell (cell-value cell))))
+    (unless m
+      (runtime-error "def: no such method ~a" (->string name)))
+    (unless (fnmethod? m)
+      (runtime-error "def: ~a is not a method" (->string name)))
+    (unless (eql (length class-syms) (length (fnmethod-dispatch-params m)))
+      (runtime-error "def: incorrect number of dispatch-params. dispatch-params for ~a are ~a."
+                     (->string name)
+                     (fnmethod-dispatch-params m)))
+    ;; (unless (params-eqv (fnmethod-params m) params)
+    ;;   (runtime-error
+    ;;    "def: mismatched method parameter list. ~a parameters are (~{~a~^ ~})."
+    ;;    (->string name)
+    ;;    (mapcar #'->string (fnmethod-params m))))
+    (let ((types (mapcar $(class-by-name (code-data $)) class-syms)))
+      (if (get-impl m types)
+          (runtime-error "def: method already defined")
+          (set-impl m types (make-fnfun :params (code->param-list params)
+                                        :body body
+                                        :closure *current-env*))))))
 
 (defun eval-defclass (name params-code)
   (let* ((params (code->param-list params-code))
          (fields (param-vars params))
          (new-class (make-fnclass :name name :fields fields)))
     (setf (fnclass-constructor new-class) (make-constructor new-class params))
-    (add-global-cell *current-env* name (make-cell :value new-class))
+    (safe-add-global name new-class)
     new-class))
 
 (defun param-vars (param-list)
@@ -466,11 +526,23 @@
                 :body $(make-fnobj :class class
                                    :contents (env-table (bind-params params $ nil))))))
 
+(defun eval-defmacro (name params-code body-code)
+  (set-global-macro *current-env*
+                    name
+                    (make-fnfun :params (code->param-list params-code)
+                                :body body-code
+                                :closure *current-env*))
+  fnnull)
+
+(defun eval-defmethod (name dispatch-params params)
+  "Create a new method."
+  (let ((m (make-fnmethod :params (code->param-list params)
+                          :dispatch-params (mapcar #'code-data dispatch-params))))
+   (safe-add-global name m)))
+
 (def-op "defvar" (name value)
   (let ((v (eval-code value)))
-    (add-global-cell *current-env*
-                     (code-data name)
-                     (make-cell :value v :mutable t))
+    (safe-add-global (code-data name) v)
     v))
 
 
@@ -543,14 +615,6 @@
   (aif (gethash (sym-id key) (fnobj-contents obj))
        (cell-value it)
        (runtime-error "object has no field named ~a" (->string key))))
-
-(defun eval-defmacro (name params-code body-code)
-  (set-global-macro *current-env*
-                    name
-                    (make-fnfun :params (code->param-list params-code)
-                                :body body-code
-                                :closure *current-env*))
-  fnnull)
 
 (def-op "set" (place value)
   (cond
@@ -627,13 +691,13 @@
      nil)
     ((null (code-data expr)) nil)
     ((code-sym? (code-car expr))
-     (let ((op (code-sym-name (code-car expr))))
+     (let ((op (code-data (code-car expr))))
        (cond
-         ((and (string= op quasiquot-sym-name)
+         ((and (eq op quasiquote-sym)
                (length= (code-data expr) 2))
           (find-$-qquote (code-cadr expr) (+ level 1)))
-         ((and (or (string= op unquot-sym-name)
-                   (string= op unquot-splice-sym-name))
+         ((and (or (eq op unquote-sym)
+                   (eq op unquote-splice-sym))
                (length= (code-data expr) 2))
           (if (= level 1)
               (find-$-syms (code-cadr expr))
@@ -651,12 +715,12 @@
     ((null (code-data expr)) nil)
 
     ((code-sym? (code-car expr))
-     (let ((op (code-sym-name (code-car expr))))
+     (let ((op (code-data (code-car expr))))
        (cond
-         ((string= op quasiquot-sym-name)
+         ((eq op quasiquote-sym)
           (find-$-qquote (code-cadr expr) 1))
-         ((string= op quot-sym-name) nil)
-         ((string= op dollar-sym-name) nil)
+         ((eq op quote-sym) nil)
+         ((eq op dollar-fn-sym) nil)
          (t (mapcan #'find-$-syms (code-data expr))))))
 
     (t (mapcan #'find-$-syms (code-data expr)))))
@@ -672,7 +736,7 @@
                  n-str
                  :initial-value 0)))))
 
-(def-op "dollar-fn" (expr)
+(defun eval-dollar-fn (expr)
   (let* (($-syms (find-$-syms expr))
          (max-id (reduce $(if (> $0 $1) $0 $1)
                          (mapcar #'$-sym-id $-syms)
@@ -684,39 +748,39 @@
                            :key #'sym-name))
          (pos (loop for i from 0 to max-id
                  ;; remember the CONS b/c parameters may have optional values
-                 collect (cons (fnintern (format nil "$~a" i)
-                                         interpreter)
+                 collect (cons (fnintern (format nil "$~a" i))
                                nil)))
          (params (make-param-list :pos pos
                                   :vari (and has-vari
-                                             (fnintern "$&" interpreter)))))
+                                             (fnintern "$&"))))
+         (closure *current-env*))
     (make-fnfun :body
                 (lambda (args)
-                  (let ((env0 (bind-params params args env)))
+                  (let ((env0 (bind-params params args closure)))
                     ;; add the alternative symbol for the first arg
                     (if (>= max-id 0)
                         (add-cell env0
-                                  (fnintern "$" interpreter)
-                                  (get-cell *current-env* (fnintern "$0" interpreter))))
-                    (eval-code expr env0 interpreter))))))
+                                  (fnintern "$")
+                                  (get-cell env0 (fnintern "$0"))))
+                    (eval-code expr env0))))))
 
 (def-op "if" (test then else)
-  (let ((b (eval-code test env interpreter)))
+  (let ((b (eval-code test)))
     (if (or (eq b fnnull)
             (eq b false))
-        (eval-code else env interpreter)
-        (eval-code then env interpreter))))
+        (eval-code else)
+        (eval-code then))))
 
 (def-op "cond" (&rest body)
   (let ((clauses (group 2 body)))
     (rlambda (src) (clauses)
       (when (null src)
         (runtime-error "every cond clause failed"))
-      (let ((x (eval-code (caar src) env interpreter)))
+      (let ((x (eval-code (caar src))))
         (if (or (eq x fnnull)
                 (eq x false))
             (recur (cdr clauses))
-            (eval-code (cadar src) env interpreter))))))
+            (eval-code (cadar src)))))))
 
 (def-op "quote" (code)
   (code->fnvalue code))

@@ -43,7 +43,7 @@
    ;; modules and environments
    :cell :make-cell :cell-value :value :cell-mutable :mutable
    :make-env :add-global-cell :add-cell :get-module-cell :get-cell :get-macro :set-global-macro
-   :env-module :env-table
+   :env-module :env-table :get-class
    :fnmodule :name :vars :macros :make-fnmodule :fnmodule-name :fnmodule-vars :fnmodule-macros
    :add-module-cell :fnmodule?
    ;; functions
@@ -52,7 +52,8 @@
    ;; general objects
    :fnclass :fields :constructor :fnclass-name :make-fnclass :fnclass-fields :fnclass-constructor :fnclass?
    :fnobj :class :contents :make-fnobj :fnobj-class :fnobj-contents :fnobj?
-   :fnmethod :make-fnmethod :fnmethod?
+   :fnmethod :make-fnmethod :fnmethod? :get-impl :set-impl :fnmethod-params :impls :dispatch-params
+   :fnmethod-dispatch-params :fnmethod-impls :fnmethod-default-impl :default-impl
    ;; pretty printing
    :->string :fnprint :fnprintln :->code-string :fnprint-code :fnprintln-code))
 
@@ -203,12 +204,14 @@
 (defun fnmapcar (fun x)
   (loop
      for src = x then (cdr src)
-     until (empty? src)
+     ;; the and makes this work on normal lists too
+     until (and src (empty? src))
      collect (funcall fun (car src))))
 (defun fnmapcan (fun x)
   (loop
      for src = x then (cdr src)
-     until (empty? src)
+     ;; the and makes this work on normal lists too
+     until (and src (empty? src))
      nconc (funcall fun (car src))))
 
 (defun fnstring (&rest objects)
@@ -256,7 +259,7 @@
 
 (defun add-cell (env sym cell)
   "Add a new cell to a module given"
-  (setf (gethash (sym-id sym) env) cell))
+  (setf (gethash (sym-id sym) (env-table env)) cell))
 
 (defun get-module-cell (mod sym)
   "Get the CELL, if any, associated with SYM in the provided lexical environment and module. Returns
@@ -278,6 +281,15 @@
 (defun set-global-macro (env sym value)
   "Set the macro associated with SYM in the provided and module."
   (setf (gethash (sym-id sym) (fnmodule-macros (env-module env))) value))
+
+(defun get-class (env sym)
+  "If sym is bound to a class object, then return that class. If sym is unbound or bound to another
+ type of object, returns NIL."
+  (aif (get-cell env sym)
+       (if (fnclass? (cell-value it))
+           (cell-value it)
+           nil)
+       nil))
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -321,11 +333,14 @@
 (defstruct (fnmethod (:predicate fnmethod?) :copier)
   (params nil :type param-list :read-only t)
   (dispatch-params nil :type list :read-only t)
-  (impls nil :type hash-table :read-only t)
+  (impls (make-hash-table :test 'equalp) :type hash-table :read-only t)
   (default-impl nil))
 
 (defun get-impl (m types)
   (gethash types (fnmethod-impls m)))
+
+(defun set-impl (m types fun)
+  (setf (gethash types (fnmethod-impls m)) fun))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
