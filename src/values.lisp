@@ -42,12 +42,14 @@
    :fnstring :string? :table :table?
    ;; modules and environments
    :cell :make-cell :cell-value :value :cell-mutable :mutable
-   :make-env :add-global-cell :add-cell :get-module-cell :get-cell :get-macro :set-global-macro
+   :make-env :add-global-cell :add-cell :get-module-cell :get-cell :get-macro :get-module-macro
+   :set-global-macro
    :env-module :env-table :get-class
    :fnmodule :name :vars :macros :make-fnmodule :fnmodule-name :fnmodule-vars :fnmodule-macros
    :add-module-cell :fnmodule?
    ;; functions
-   :param-list :make-param-list :pos :keyword :vari
+   :param-list :make-param-list :pos :keyword :vari :param-list-pos :param-list-keyword
+   :param-list-vari :param-list-vars :param-list-eqv
    :fnfun :params :body :env :closure :param-list-syms :make-fnfun :fnfun?
    ;; general objects
    :fnclass :fields :constructor :fnclass-name :make-fnclass :fnclass-fields :fnclass-constructor :fnclass?
@@ -278,6 +280,10 @@
   "Get the macro associated with SYM in the provided lexical environment and module."
   (gethash (sym-id sym) (fnmodule-macros (env-module env))))
 
+(defun get-module-macro (mod sym)
+  "Get the macro associated with SYM in the provided lexical environment and module."
+  (gethash (sym-id sym) (fnmodule-macros mod)))
+
 (defun set-global-macro (env sym value)
   "Set the macro associated with SYM in the provided and module."
   (setf (gethash (sym-id sym) (fnmodule-macros (env-module env))) value))
@@ -304,6 +310,36 @@
   (keyword nil :type list :read-only t)
   ;; variadic parameter
   (vari nil :type (or sym null) :read-only t))
+
+(defun param-list-eqv (p0 p1)
+  "Tell if two PARAM-LIST objects are equivalent. P1 and P2 are equivalent means:
+
+ - P0 and P1 have the same number of positional parameters and the same number of them are optional
+ - P0 and P1 have the same set of keyword parameter names
+ - either P0 and P1 both have variadic parameters or neither does"
+  (let* ((pos0 (param-list-pos p0))
+         (pos1 (param-list-pos p1))
+         (req-and-opt0 (split-when (complement #'cdr) pos0))
+         (req-and-opt1 (split-when (complement #'cdr) pos1))
+         (vari0 (param-list-vari p0))
+         (vari1 (param-list-vari p1)))
+    (and
+     ;; required params
+     (length= (car req-and-opt0) (length (car req-and-opt1)))
+     ;; optional params
+     (length= (cadr req-and-opt0) (length (cadr req-and-opt1)))
+     ;; check same keyword param
+     (set-equal (mapcar #'car (param-list-keyword p0))
+                (mapcar #'car (param-list-keyw)))
+     ;; check vari params
+     (not (xor vari0 vari1)))))
+
+(defun param-list-vars (param-list)
+  "Get the parameters bound by a PARAM-LIST"
+  (with-slots (pos keyword vari) param-list
+    (append (mapcar #'car pos)
+            (mapcar #'car keyword)
+            (if vari (list vari)))))
 
 (defstruct (fnfun (:predicate fnfun?))
   ;; parameter list

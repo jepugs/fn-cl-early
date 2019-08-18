@@ -21,7 +21,7 @@
   (:export
    ;; List/sequence functions
    :group :take :drop :split :take-while :drop-while :split-when :split-at :flatten :interleave
-   :length< :length=
+   :length< :length= :set-equal
    ;; hash-table functions
    :make-ht :make-eq-ht :ht-keys :ht-has-key :ht-values :ht->plist :ht-conc :ht-append :ht-del-keys
    :copy-ht
@@ -183,6 +183,11 @@
       (cond ((zerop n) (null lst))
             ((null lst) nil)
             (t (recur (- n 1) (cdr lst))))))
+
+(defun set-equal (lst0 lst1)
+  "Tell if two lists contain the same elements"
+  (not (or (set-difference lst0 lst1 :test #'equalp)
+           (set-difference lst1 lst0 :test #'equalp))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 

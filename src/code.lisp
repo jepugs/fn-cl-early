@@ -19,11 +19,17 @@
   (:documentation "intermediate representation and syntax checking")
   (:use :cl :fn.util :fn.ast :fn.values)
   (:export :code :origin :data :make-code :code-origin :code-data :code? :code-intern :ast->code
-           :code-list? :code-sym? :code-sym-name :code-sym-id :code-car :code-cadr :code-cdr
-           :code-literal? :code-quoted-sym? :code-op-is :code->fnvalue :validate-code
-           :bracket-sym-name :brace-sym-name :dollar-sym-name :dot-sym-name :quot-sym-name
-           :quasiquot-sym-name :unquot-sym-name :unquot-splice-sym-name :true-sym-name
-           :false-sym-name :null-sym-name))
+           :code-list? :code-sym? :code-sym-name :code-sym-id
+           :code-literal? :code-quoted-sym? :code-op-is :code->fnvalue :fnvalue->code
+           :code->param-list
+           :validate-code
+           ;; symbol names (consider removing)
+           :bracket-sym-name :brace-sym-name :dollar-sym-name :dot-sym-name
+           :quot-sym-name :quasiquot-sym-name :unquot-sym-name :unquot-splice-sym-name
+           :true-sym-name :false-sym-name :null-sym-name
+           ;; code-cxr
+           :code-car :code-cdr :code-caar :code-cadr :code-cdar :code-cddr :code-cadar :code-caddr
+           ))
 
 (in-package :fn.code)
 
@@ -113,12 +119,27 @@
   (sym-name (code-data c)))
 (defun code-sym-id (c)
   (sym-id (code-data c)))
+
+;; code-cxr functions
 (defun code-car (c)
   (car (code-data c)))
-(defun code-cadr (c)
-  (cadr (code-data c)))
 (defun code-cdr (c)
   (cdr (code-data c)))
+
+(defun code-caar (c)
+  (code-car (code-car c)))
+(defun code-cadr (c)
+  (cadr (code-data c)))
+(defun code-cdar (c)
+  (code-cdr (code-car c)))
+(defun code-cddr (c)
+  (cddr (code-data c)))
+
+(defun code-cadar (c)
+  (code-car (code-cdar c)))
+(defun code-caddr (c)
+  (code-car (code-cddr c)))
+
 
 (defun code-literal? (c)
   (with-slots (data) c
@@ -129,7 +150,7 @@
     (and (listp data)
          (length= data 2)
          (every #'code-sym? data)
-         (string= quot-sym-name (code-sym-name (car data))))))
+         (eq (code-data (car data)) quote-sym))))
 
 (defun code-op-is (c op-name)
   "Check whether C has a certain symbol in its operator position. Assumes C contains a list."
@@ -142,6 +163,46 @@
     (if (listp data)
         (apply #'fnlist (mapcar #'code->fnvalue data))
         data)))
+
+(defun code->param-list (lst)
+  "Takes a list of code objects and generates a param-list"
+  (let* ((non-vari
+          (take-while $(not (and (code-sym? $)
+                                 (string= (code-sym-name $) "&")))
+                      lst))
+         (pos (remove-if-not $(or (and (code-sym? $)
+                                       (not (string= (code-sym-name $) "&")))
+                                  (and (code-list? $)
+                                       (code-sym? (code-car $))
+                                       (not (code-quoted-sym? $))))
+                             non-vari))
+         (keyword (remove-if-not $(or (code-quoted-sym? $)
+                                      (and (code-list? $)
+                                           (code-quoted-sym? (code-car $))))
+                                 non-vari))
+         (vari (if (some $(and (code-sym? $)
+                               (string= (code-sym-name $) "&"))
+                         lst)
+                   (code-data (car (last lst)))
+                   nil)))
+    (make-param-list :pos (mapcar $(if (code-sym? $)
+                                       (cons (code-data $) nil)
+                                       (cons (code-data (code-car $))
+                                             (code-cadr $)))
+                                  pos)
+                     :keyword (mapcar $(if (code-quoted-sym? $)
+                                           (cons (code-data (code-cadr $)) nil)
+                                           (cons (code-data (code-cadar $))
+                                                 (code-cadr $)))
+                                      keyword)
+                     :vari vari)))
+
+(defun fnvalue->code (v origin)
+  (make-code origin
+             (if (fnlist? v)
+                 (mapcar $(fnvalue->code $ origin)
+                         (fnlist->list v))
+                 v)))
 
 (eval-when (:load-toplevel :compile-toplevel :execute)
   (defmacro code-error (c format-string &rest format-args)
@@ -301,7 +362,7 @@
       ;; method definition
       ((and (code-list? place)
             (code-list? (code-car place))
-            (code-sym? (code-car (code-car place))))
+            (code-sym? (code-caar place)))
        (validate-params o
                         (code-cdr place)
                         "in method definition parameters: ")
@@ -331,9 +392,9 @@
   (let ((proto (car args)))
    (unless (and (code-list? proto)
                 (code-list? (code-car proto))
-                (code-sym? (code-car (code-car proto)))
+                (code-sym? (code-caar proto))
                 ;; check that all classes are symbols
-                (every #'code-sym? (code-cdr (code-car proto))))
+                (every #'code-sym? (code-cdar proto)))
      (fn-error o "malformed defmethod expression"))
    (validate-params o (code-cdr proto))))
 
