@@ -403,6 +403,20 @@ The following classes are built into fn.
 This section completely (and formal-ish-ly) describes fn as it is now. It is a work in progress, but
 it's completion is a priority.
 
+** Notation
+
+Operators are documented using syntax that looks like this: ~(op <var1> <vars*>)~. In this example, op
+is a literal code symbol, <var1> is a single user-specified expression, and <vars*> is an inline
+sequence of other expressions. In general, the symbols in angle brackets are parameters for the
+operator while unbracketed. A Kleene star (*) in angle brackets always indicates a sequence.
+
+In addition, some names have more specific meanings:
+
+- <body*> :: a series of one or more expressions constituting a valid function body
+- <obj> :: is an expression yielding an arbitrary object
+- <params*> :: an fn parameter list like those used in function creation
+
+
 ** Syntax
 *** Literals
 
@@ -411,6 +425,45 @@ it's completion is a priority.
 *** Lists
 
 *** Other syntax
+
+*** BNF
+
+Below is the BNF used to parse the language. It is presented as the same LR(1) grammar used by the
+interpreter.
+
+#+BEGIN_SRC
+<program> ::= <expr>*
+<expr>    ::= <atom>
+            | <group>
+            | <dot>
+            | <dollar>
+            | <quoted>
+            | <unquoted>
+            | <unquote-spliced>
+            | <quasiquoted>
+
+<atom> ::= <symbol> | <number> | <string>
+
+<group>     ::= <list> | <brackets> | <braces>
+<list>      ::= "(" <expr>* ")"
+<brackets>  ::= "[" <expr>* "]"
+<braces>    ::= "{" <expr>* "}"
+
+<dot> ::= <dot-part> <symbol>
+<dot-part> ::= <symbol> "." | <dot-part> "."
+
+<dollar> ::= "$(" <expr*> ")"
+           | "$[" <expr*> "]"
+           | "${" <expr*> "}"
+           | "$`" <expr>
+
+<quoted>           ::= "'" <expr>
+<unquoted>         ::= "," <expr>
+<unquote-spliced>  ::= "," <expr>
+<quasiquoted>      ::= "`" <expr>
+#+END_SRC
+
+Where <symbol> is a symbol, <number> is a number, and <string> is a string literal.
 
 
 ** Special operators
@@ -422,44 +475,67 @@ and implemented in the interpreter
 
 #+BEGIN_SRC fn
 ;;; syntax - apply
-(apply <fun> <args*> <arg-list>)
+(apply <obj> <args*> <arg-list>)
 ;;; where
-;; <fun> is a function
+;; <obj> is a callable object
 ;; <args> 0 or more arguments to be passed to <fun>
 ;; <arg-list> a list of arguments to be passed to <fun>
 #+END_SRC
 
-~apply~ calls a function with elements of the provided list as arguments. If <args*> are specified
-before <arg-list> then those arguments are prepended to the arg-list before calling.
+~apply~ invokes an object's call method with elements of the provided list as arguments. If <args*>
+are specified before <arg-list> then those arguments are prepended to the arg-list before calling.
 
 *** TODO ~case~
 
-~case~ behavior is not yet specified.
+*Impl. status:* ~case~ behavior is not yet fully specified.
 
 *** DONE ~class-of~
 
 #+BEGIN_SRC fn
 ;;; syntax - class-of
 (class-of <obj>)
-;;; where
-;; <obj> is an arbitrary object
 #+END_SRC
 
 ~class-of~ gets the class of an object.
+
+*** DONE ~cond~
+
+#+BEGIN_SRC fn
+;;; syntax - cond
+(cond <cond-clauses*>)
+;;; where
+;; <cond-clauses*> is a nonempty even-length sequence of expressions
+
+;;; example:
+(def (divisor-search x)
+  (cond
+    (= (mod x 2) 0) "2 divides x"
+    (= (mod x 3) 0) "3 divides x"
+    ;; this
+    true "neither 2 nor 3 divides x"))
+;; only the first truthy condition is used
+(divisor-search 6) ;=> "2 divides x"
+(divisor-search 12) ;=> "2 divides x"
+(divisor-search 9) ;=> "3 divides x"
+(divisor-search 5) ;=> "neither 2 nor 3 divides x"
+
+#+END_SRC
+
+~cond~ is a conditional construct. Each cond-clause is two expressions, a condition followed by a
+result. Each condition is evaluated in the provided order until one of them evaluates to a truthy
+value (i.e. anything other than ~false~ or ~null~). The result of this condition is evaluated and
+returned. If no conditions succeed, then ~null~ is returned.
 
 *** DONE ~def~
 
 #+BEGIN_SRC fn
 ;;; syntax - def
-(def <var> <value>)                          ; var def
-(def (<var> <params*>) <body*>)              ; function def
-(def ((<method> <types*>) <params>) <body*>) ; method def
+(def <var> <obj>)                              ; var def
+(def (<var> <params*>) <body*>)                ; function def
+(def ((<method> <types*>) <params*>) <body*>)  ; method def
 ;;; where
 ;; <var> is an unbound symbol
-;; <value> is an expression
-;; <params*> is a parameter list
-;; <types*> is a non-empty list of symbols naming classes
-;; <body*> is a function body
+;; <types*> is a non-empty sequence of symbols naming classes
 ;; <method> is a symbol naming a global method
 #+END_SRC
 
@@ -467,35 +543,345 @@ before <arg-list> then those arguments are prepended to the arg-list before call
 variable with the specified value. The second form creates a function named <var> with the provided
 params and body. The third form defines a method implementation of <method> on the provided types.
 
-*** TODO ~defclass~
+*** DONE ~defclass~
 
-*** TODO ~defvar~
+#+BEGIN_SRC fn
+;;; syntax - defclass
+(defclass (<Name> <params*>) <options*>)
+;;; where
+;; <Name> is an unbound symbol used to hold the created class object
+;; <options*> is a sequence of defclass options
+#+END_SRC
 
-*** TODO ~do~
+~defclass~ creates a new global class object of the given name. The parameter list variables are used
+as the class's fields and is also used to define the constructor.
 
-*** TODO ~dollar-fn~
+At this time, there are no supported class definition options. Future extensions will allow
+declaration of mutable/immutable fields, alternative constructor behavior, and so on.
 
-*** TODO ~fn~
+*** DONE ~defmacro~
+
+#+BEGIN_SRC fn
+;;; syntax - defmacro
+(defmacro (<var> <params*>) <body*>)
+;;; where
+;; <var> is a symbol
+#+END_SRC
+
+~defmacro~ defines a global macro (local macros do not presently exist in fn). The expansion function
+takes the provided params and evaluates <body*>.
+
+Macroexpansion is similar to function calling, except that macros accept and return code objects.
+The arguments to a macro are not evaluated, but are quoted and passed directly to the expansion
+function. The result of the macro is then evaluated in place of the original list.
+
+Macros are not first class objects, and so they may share names with normal variables. This is
+generally not a good idea, but can be useful in some cases (i.e. where a function can be
+preprocessed based on its arguments to have a more efficient expansion).
+
+*** DONE ~defmethod~
+
+#+BEGIN_SRC fn
+;;; syntax - defmethod
+(defmethod ((<var> <dispatch-params*>) <params*>)
+  <method-options*>)
+;;; where
+;; <dispatch-params*> is a sequence of symbols, all of which must appear as names in <params*>
+;; <method-options*> is a sequence of method options, none of which are currently defined
+#+END_SRC
+
+~defmethod~ defines a new global method object, which is a callable object that has different behavior
+depending on the classes of its arguments. The dispatch params determine which parameters are used
+to decide the behavior. Method instances (i.e. specific functions for different combinations of
+classes) are created using ~def~.
+
+*** DONE ~defvar~
+
+#+BEGIN_SRC fn
+;;; syntax - defclass
+(defvar <var> <obj>)
+;;; where
+;; <var> is an unbound symbol
+#+END_SRC
+
+~defvar~ defines global mutable variables.
+
+*** TODO ~defvar*~
+
+#+BEGIN_SRC fn
+;;; syntax - defclass
+(defvar* <var> <obj>)
+;;; where
+;; <var> is an unbound symbol
+#+END_SRC
+
+~defvar*~ defines global dynamic variables.
+
+*Impl. status:* ~defvar*~ is not implemented
+
+*** DONE ~do~
+
+#+BEGIN_SRC fn
+;;; syntax - do
+(do <body*>)
+#+END_SRC
+
+~do~ evaluates the expressions in its body in the order in which they are provided, returning the
+result of the last expression.
+
+*** DONE ~dollar-fn~
+
+#+BEGIN_SRC fn
+;;; syntax - dollar-fn
+(dollar-fn <expr>)
+;;; where
+;; <expr> is an expression which may contain $-syms
+
+;;; equivalent syntax is
+$<expr>
+;; however, the dollar sign must not have any whitespace before the expression, and the expression
+;; must start with one of these characters: (, [, {, or `.
+
+
+;;; examples:
+;; creates a function of two arguments that adds them
+$(+ $0 $1)
+;; creates a function of one argument that subtracts six
+$(- $ 6)
+#+END_SRC
+
+~dollar-fn~ is mainly used via dollar-sign syntax. It provides a convenient notation for short
+anonymous functions. To evaluate ~dollar-fn~, the code for <expr> is walked so that $-syms can be
+found. $-syms are symbols ~$~, ~$0~, and ~$&~, plus all symbols of the form ~$n~, where ~n~ is a positive
+integer with no plus sign or leading 0s, e.g. ~$2~ or ~$11~.
+
+$-syms correspond to positional arguments in the created function. ~$~ and ~$0~ are equivalent, and
+denote the first argument, ~$1~ denotes the second, and so on. When ~$&~ appears in the list, it is
+bound to a list of all arguments after the last positional argument in the list.
+
+The functions created by ~dollar-fn~ only accept as many arguments as are necessary. If the expression
+only contains ~$~, the function will accept exactly one argument, while if its maximum-numbered $-sym
+is ~$7~, it will accept at 8 arguments. An expression with ~$&~ will accept any number of arguments, and
+a function with no $-syms will accept no arguments.
+
+Nested occurrences of ~dollar-fn~ are not walked for $-syms in the outer ~dollar-fn~. This means that
+nesting dollar-fn is legal, but no argument vars from the outer function can be accessed by the
+inner function.
+
+*** DONE ~fn~
+
+#+BEGIN_SRC fn
+;;; syntax - fn
+(fn (<params*>) <body*>)
+#+END_SRC
+
+~fn~ creates an anonymous function which accepts the provided parameters and executes the code in
+<body*>.
 
 *** TODO ~get~
 
-*** TODO ~get-field~
+#+BEGIN_SRC fn
+;;; syntax - get
+(get <obj> <keys*>)
+;;; where
+;; <keys*> is a sequence of one or more objects used as keys for obj
 
-*** TODO ~if~
+;;; dot syntax expands into get expressions
+<sym1>.<sym2>
+;;; expands to
+(get <sym1> '<sym2>)
+;;; where <sym1> and <sym2> are both symbols
+#+END_SRC
+
+~get~ is used to access the contents of an object using the provided keys. If multiple keys are
+provided, then ~get~ is applied recursively using each key in order.
+
+Default behavior for ~get~ depends on the type of the object:
+
+#+BEGIN_SRC fn
+;;; lists
+;; get a numerical index (starting from 0)
+(get [1 2 3] 0) ;=> 1
+(get [1 2 3] 2) ;=> 3
+;; can also get the head and tail of the list
+(get [1 2 3] 'hd) ;=> 1
+(get [1 2 3] 'tl) ;=> [2 3]
+
+;;; strings
+;; get a numerical index
+(get "test" 1) ;=> "e"
+
+;;; modules
+;; gets variables from the module
+(get <module> <var>) ;; value of a variable in a module
+#+END_SRC
+
+On general objects, the default behavior of ~get~ is to call ~get-field~, but this can be customized
+by defining the built-in method ~get-method~ on the class of the object.
+
+*Impl. Status:* works but doesn't check for ~get-method~ implementations
+
+*** DONE ~get-field~
+
+#+BEGIN_SRC fn
+;;; syntax - get-field
+(get-field <obj> <fields*>)
+;;; where
+;; <fields*> are expressions yielding fields to access
+#+END_SRC
+
+~get-field~ is used to directly access the fields of an object. If multiple fields are provided, then
+~get-field~ is applied recursively for each key. Unlike ~get~, ~get-field~ always has the same behavior
+regardless of the type of object. Most built-in types have no gettable fields and will cause an
+error if they are passed as an object to ~get-field~.
+
+*** DONE ~if~
+
+#+BEGIN_SRC fn
+;;; syntax - if
+(if <obj>
+    <then>
+    <else>)
+;;; where <then> and <else> are arbitrary expressions
+#+END_SRC
+
+~if~ is a conditional expression. If <obj> is not ~false~ or ~null~, then it evaluates <then> and returns
+its value. Otherwise, it evaluates <else> and returns that value.
 
 *** TODO ~import~
 
-*** TODO ~let~
+#+BEGIN_SRC fn
+;;; syntax - import
+(import <module>)
+(import <module> 'as <var>)
+;;; where
+;; <module> is a module designator
+;; <var> is a symbol
+#+END_SRC
 
-*** TODO ~quasiquote~
+~import~ imports an external module as a global variable.
 
-*** TODO ~quote~
+*Impl status:* import is not implemented at all because I'm still figuring out how module search paths
+will work.
+
+*** DONE ~let~
+
+#+BEGIN_SRC fn
+;;; syntax - let
+(let (<binding-specs*>)
+  <body*>)
+;;; where
+;; <binding-specs*> is an even-length alternating sequence of symbols and expressions
+
+;;; examples
+(let (x 2
+      y 3)
+  (+ x y)) ;=> 5
+;; example with a recursive function:
+(let (f (fn (acc lst)
+          (if (= lst [])
+              acc
+              (f (+ lst.hd acc) lst.tl))))
+  (f 0 [1 2 3])) ;=> 6
+#+END_SRC
+
+~let~ is used to extend the current lexical environment with new variables. The body is evaluated
+within the extension.
+
+A binding specifier is a symbol followed by a value expression. Each binding specifier adds one
+local variable with the provided symbol as a name. Its value is the result of evaluating the
+expression.
+
+When let is evaluated, the lexical environment is extended before any value expressions are
+evaluated. This allows recursive function definitions. The value expressions are always evaluated in
+the order they are provided provided.
+
+*** DONE ~quasiquote~
+
+#+BEGIN_SRC fn
+;;; syntax - quasiquote
+(quasiquote <expr>)
+;;; or equivalently
+`<expr>
+;;; where <expr> is an arbitrary expression
+#+END_SRC
+
+~quasiquote~ performs quasiquotation of the provided expression. When applied to an ~unquote~
+expression, that value of unquote expression is evaluated. When applied to a list, recurisvely
+applies quasiquotation to the elements of the list. When applied to another type of expression,
+quotes the expression.
+
+In addition, a quasiquoted list may contain ~unquote-splice~ expressions. ~unquote-splice~ expressions
+evaluated and return a list (an error is generated if the value is not a list). This list is spliced
+into the rest of the quasiquoted list.
+
+Nesting quasiquote changes unquote behavior. For each level of quasiquotation, an additional level
+of unquotation is needed in order to trigger evaluation. Lower-levels of unquote and unquote-splice
+expressions are quoted like normal lists.
+
+*** DONE ~quote~
+
+#+BEGIN_SRC fn
+;;; syntax - quote
+(quote <expr>)
+;;; or equivalently
+'<expr>
+
+;;; examples:
+;; quoting literals
+'-2 ;=> -2
+'"str" ;=> "str"
+;; quoting symbols
+'a ;=> a
+'symbol ;=> symbol
+;; quoting lists
+'(+ 2 x) ;=> [+ 2 x]
+'(String "x+3=" (+ x 3)) ;=> [String "x+3=" [+ x 3]]
+#+END_SRC
+
+~quote~ causes an expression's code to be returned as an fn value. This process is called *quoting*.
 
 *** TODO ~set~
 
-*** TODO ~unquote~
+#+BEGIN_SRC fn
+;;; syntax - quote
+(set <var> <value>)
+(set (get-field <obj> <fields*>) <value>)
+(set (get <obj> <keys*>) <value>)
+#+END_SRC
 
-*** TODO ~unquote-splice~
+~set~ is used to set variables and to modify objects. When ~(set (get-field))~ is used, the respective
+field is modified. When ~(set (get))~ is used, the appropriate implementation of ~set-method~ is used.
+Note that ~set-method~'s default behavior is to do ~(set (get-field))~.
+
+*Impl. status:* implemented, but doesn't use ~set-method~.
+
+*** DONE ~unquote~
+
+#+BEGIN_SRC fn
+;;; syntax - unquote
+(unquote <expr>)
+;;; or equivalently
+,<expr>
+#+END_SRC
+
+~unquote~ is used within ~quasiquote~, where it causes its expression to be evaluated.
+
+When ~unquote~ appears outside of ~quasiquote~, an error is generated.
+
+*** DONE ~unquote-splice~
+
+#+BEGIN_SRC fn
+;;; syntax - unquote
+(unquote-splice <expr>)
+;;; or equivalently
+,<expr>
+#+END_SRC
+
+~unquote-splice~ is used within quasiquoted lists, where it causes its expression to be evaluated and
+spliced into the list.
+
+When ~unquote-splice~ appears outside of a quasiquoted list, an error is generated.
 
 
 ** Built-in values
@@ -542,66 +928,6 @@ Sequence library:
 If anyone other than me ever tries to read this, I'm sorry. This is a "complete" specification of
 version 0 of the fn programming language (i.e. complete enough for me, the language designer, to
 remember the decisions I've made so far).
-
-*** Flow control
-
-- cond
-- do
-- if
-- let
-
-*if* works as it always does and *do* works like ~PROGN~ does in Common Lisp or ~begin~ in Scheme.
-
-*cond* has its syntax changed so omit the second level of parentheses. Instead, it takes an
-alternating series of tests and results, and automatically groups them into pairs.
-
-#+BEGIN_SRC fn
-  ;; syntax
-  (cond
-    test0
-      result0
-    test1
-      result1)
-
-  ;; example. returns "fizz" if x is a multiple of 3, "buzz" if it's a multiple of 5, "fizzbuzz" if
-  ;; it's both, and x as a string if it's neither.
-  (defn foo (x)
-    (cond
-      (= (mod x 15) 0) "fizzbuzz"
-      (= (mod x 5) 0) "buzz"
-      (= (mod x 3) 0) "fizz")
-      (true (String x)))
-#+END_SRC
-
-
-~let~ has been modified in a similar way, doing away with the second layer of parentheses in the
-binding specs
-
-#+BEGIN_SRC fn
-  (let (a 2
-        b 3
-        c 4)
-    (+ a b c))
-  ;; => 9
-
-  ;; let behaves like scheme's letrec
-  (defn reverse-map (f lst)
-    (let (iter
-           (fn (acc src)
-             (if src
-                 (iter (cons (f src.hd) acc)
-                       src.tl)
-                 acc)))
-      (iter [] lst)))
-                   
-#+END_SRC
-
-
-*** Type System 
-
-Version 0 will implement the complete type system as described in Type System at the top level of
-this document.
-
 
 *** Macros
 
@@ -651,11 +977,6 @@ There are no multi-line comments in fn. Only line-end comments, started by semic
 supported.
 
 
-**** Dollar sign
-
-See function creation.
-
-
 **** Quotation
 
 Normal quote works as it usually does in Lisp. Quasiquote works the same but lacks a destructive
@@ -664,54 +985,18 @@ splice.
 
 **** Escaping
 
-Escaping is when a backslash (/) character is placed in front of another character, thereby turning it
+Escaping is when a backslash (\) character is placed in front of another character, thereby turning it
 into a symbol constituent.. Any character can be escaped in any context except for within a string, (where string
 escaping rules apply instead).
 
 
-**** Dot notation
-
-See Generic Accessors
-
-
-** Important idea: global pointers
+** idea: global pointers
 
 I think it would be very useful to introduce a "pointer" data type (a better name might be GUID,
 place, or address) which is simply an unambiguous reference to some global variable (possibly also
 local?). GUID syntax could start with #G (or something) and would be very much analogous to symbols
 in Common Lisp, in that GUIDs, like CL's symbols, would be standalone places to store objects. This
 also allows an elegant alternative to gensyms, i.e. randomly-generated, disposable places.
-
-
-** Future Features
-
-Once I've implemented everything up to version 0, I'm going to get to work on a module system as
-well as a way to sanitize macros where necessary (probably via some sort of GUID for global
-variables). That will be version 0.1. From there, the next steps will be to add multithreading and
-FFI and to otherwise flesh out the standard library, which eventually will lead me to version 0.2
-(and possibly 0.3 depending on how I break up the work). I will not increment to version 1.0 until
-the interpreter is rewritten in C++. Further goals include implementing JIT compilation using LLVM,
-adding a scientific computing/linear algebra library, and adding networking and IPC modules.
-
-
-
-** Version 0 lexer tokens
-
-(delimiters)
-left-paren, right-paren, left-bracket, right-bracket, left-brace, right-brace
-
-(unary operators)
-dollar-sign, quote, backtick, comma, comma-splice
-
-(binary operator)
-dot
-
-(literals)
-number, string, symbol
-
-comments
-
-eof
 
 
 ** Version 0 grammar
@@ -792,66 +1077,6 @@ dot -> SYMBOL "." SYMBOL
 #+END_SRC
 
 
-** Bytecode version 0
-
-All instructions are 1 byte long. The first machine will be a register machine, because it's going
-to be a register machine eventually anyway.
-
-
-** Registers and calling conventions
-
-Each general-purpose register has two parts: an 8-bit tag and a 64-bit value. The tag indicates the
-type of the data. Each thread has 256 general-purpose registers, denoted by the notation R(xx) where
-xx is a two-digit hexadecimal number in the range 00-FF, e.g. R(5E), R(C7), and R(19).
-
-At any given time, a certain set of registers are considered active.
-
-
-** Load instructions
-
-These operators load a value at the top of the stack.
-
-- LD_NUM reg float64    :: floating-point number literal
-- LD_STR reg ptr64      :: constant string
-- LD_LIST reg ptr64     :: non-empty list
-- LD_EMPTY reg ptr64    :: empty list
-- LD_TRUE reg           :: true
-- LD_FALSE reg          :: false
-- LD_NULL reg           :: null
-- LD_SYMB reg ptr64     :: symbol
-- LD_OBJ reg ptr64      :: load another type of object
-- LD_VAR reg ptr64      :: global variable reference (64-bit pointer argument)
-- LD_ADDR reg ptr64     :: an address. Could be used for either bytecode or system memory
-
-- LD_REG reg reg        :: load a register value. Args in (dest,source) order
-
-Each of the above also sets the tag bits of the associated register to a unique value based on the
-instruction in question, with LD_VAR manually reading the tag of the variable before assigning it
-and a pointer to the object to the specified register.
-
-
-*** Future load instructions
-
-Eventually, it would be cool to add tags for arbitrary-precision floats and integers.
-
-
-** Object representation
-
-Objects are always passed around as pointers. Variables and registers are tagged to keep track of
-object types. Because values are always returned in a register, tags are also preserved.
-
-In addition, the first
-
-
-** Calling and Stack manipulation
-
-This version of ~fn~ is "stackless", meaning that stack frames are allocated on the heap. The
-registers are primarily used for two things: some registers (32?) are reserved for passing
-arguments, while the rest are used to hold the results of temporary evaluations.
-
-- CLOSE reg :: create a new closure. This just 
-
-
 ** Alternative: Virtual Memory and Built-in tags
 
 I don't think I'll do this because keeping full 64-bit pointers would make foreign code interop and
@@ -864,32 +1089,4 @@ integer arithmetic operations. It would also be possible to truncate 64-bit floa
 to 62-bit precision by dropping the two rightmost digit, allowing use of x87 hardware and making
 passing around of numbers, etc, much more efficient. A downside of this approach is that it would
 give us less than the maximum 256 possible type tags that exist right now.
-
-
-** Alt. Defn syntax
-
-#+BEGIN_SRC fn
-(defn x "Optional doc-string"
-  (arg-pattern-1)
-    fn-body-1
-  (arg-pattern-2)
-    fn-body-2
-  ...)
-
-i.e.
-
-(defn factorial
-  (0) 1
-  (n) (* n (factorial (- n 1))))
-
-(defn map
-  ([]) )
-
-;; alternative: allow multiple defn's per file
-(defn factorial (0) 1)
-(defn factorial (n) (* n (factorial (- n 1)))
-
-
-#+END_SRC
-
 
