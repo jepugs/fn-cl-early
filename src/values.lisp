@@ -28,6 +28,7 @@
    :apply-sym :case-sym :cond-sym :class-of-sym :def-sym :defclass-sym :defmacro-sym :defmethod-sym
    :defvar-sym :do-sym :dollar-fn-sym :fn-sym :get-field-sym :get-sym :if-sym :import-sym :let-sym
    :quote-sym :quasiquote-sym :set-sym :unquote-sym :unquote-splice-sym
+   :null-sym :true-sym :false-sym
    ;; default class symbols
    :bool-class-sym :class-class-sym :function-class-sym :list-class-sym :module-class-sym
    :method-class-sym :null-class-sym :num-class-sym :string-class-sym
@@ -36,7 +37,7 @@
    ;; built-in methods
    :call-sym :get-method-sym :set-method-sym :add-method-sym :mul-method-sym :sub-method-sym
    ;; other built-in symbols
-   :amp-sym :hash-sym :wildcard-sym
+   :as-sym :amp-sym :hash-sym :wildcard-sym
    ;; sequences
    :fnlist :fnlist? :fnlist->list :fnlist-length :fnappend :fnmapcar :fnmapcan
    :fnstring :string? :table :table?
@@ -45,8 +46,9 @@
    :make-env :add-global-cell :add-cell :get-module-cell :get-cell :get-macro :get-module-macro
    :set-global-macro
    :env-module :env-table :get-class
-   :fnmodule :name :vars :macros :make-fnmodule :fnmodule-name :fnmodule-vars :fnmodule-macros
-   :add-module-cell :fnmodule?
+   :fnmodule :name :loaded-from :vars :macros :make-fnmodule :fnmodule-name :fnmodule-vars
+   :fnmodule-macros :fnmodule-loaded-from :add-module-cell :fnmodule? :find-module-path
+   :*module-search-path* :init-import-module
    ;; functions
    :param-list :make-param-list :pos :keyword :vari :param-list-pos :param-list-keyword
    :param-list-vari :param-list-vars :param-list-eqv
@@ -142,6 +144,10 @@
   (defparameter wildcard-sym (symtab-intern "_" template-symtab))
   (defparameter hash-sym (symtab-intern "#" template-symtab))
   (defparameter amp-sym (symtab-intern "&" template-symtab))
+  (defparameter as-sym (symtab-intern "as" template-symtab))
+
+  ;; constants
+  (def-syms "null" "true" "false")
 
   ;; built-in class fields
   (def-syms "hd" "tl" "name" "fields" "constructor" "vars" "macros")
@@ -238,13 +244,14 @@
   (mutable nil :read-only t))
 
 (defstruct env
+  ;; hash table mapping symbol IDs onto cells.
   (table (make-hash-table :test 'eql))
   module
   (parent nil))
 
-;;; environments are hash tables mapping symbol IDs onto cells.
 (defstruct (fnmodule (:predicate fnmodule?) :copier)
   (name nil :type sym)
+  (loaded-from nil)
   (vars (make-hash-table) :type hash-table)
   (macros (make-hash-table) :type hash-table))
 
@@ -297,11 +304,38 @@
            nil)
        nil))
 
-;; functions with closures carry around a copy of the global environment, so we have to do this cute
-;; trick to stop infinite print loops
+;; modules and environments usually contain references back to the global environment (e.g. in
+;; function closures), so we have to do this to stop infinite print loops
 (defmethod print-object ((object env) stream)
   (with-slots (table module parent) object
-    (format stream "<ENV module=~s>" (sym-name (fnmodule-name module)))))
+    (format stream "<ENV:module=~s>" (sym-name (fnmodule-name module)))))
+(defmethod print-object ((object fnmodule) stream)
+  (format stream "<MODULE:~s>" (sym-name (fnmodule-name object))))
+
+;; module search
+(defvar *module-search-path* '("./" "/usr/local/lib/fn/modules/" "/usr/lib/fn/modules/"))
+;;; FIXME: non-portable usage of SBCL's DIRECTORY function
+;; also, notes so I don't forget: the :TYPE field is used _ONLY_ for the last extension of the
+;; filename, e.g. code.test.lisp has :NAME "code.test" and :TYPE "lisp".
+(defun find-module-path (name)
+  "Find a module given its name. Searches each directory in *MODULE-SEARCH-PATH* for a file named
+ NAME.fn."
+  (some (lambda (dir)
+          (aif (directory (make-pathname :directory (list :relative dir)
+                                         :name name
+                                         :type "fn"))
+               (car it)
+               nil))
+        *module-search-path*))
+(defun init-import-module (sym)
+  "If sym name is found in the module search path, returns an empty module with the LOADED-FROM and
+ NAME fields set. Otherwise returns null."
+  (aif (find-module-path (sym-name sym))
+       (let ((res (make-fnmodule :name sym
+                                 :loaded-from it)))
+         (add-module-cell res sym (make-cell :value res))
+         res)
+       nil))
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -422,6 +456,11 @@
                                "#<CLASS: "
                                (sym-name (fnclass-name x))
                                ">"))
+    ((fnmodule? x)
+     (concatenate 'string
+                  "#<MODULE: "
+                  (sym-name (fnmodule-name x))
+                  ">"))
     ((fnobj? x)
      (format nil
              "(~a ~{~a~^ ~})"

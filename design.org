@@ -882,6 +882,13 @@ When ~unquote-splice~ appears outside of a quasiquoted list, an error is generat
 This section is a bunch of garbage to help me remember things. I don't recommend trying to read
 this.
 
+** Proposal: implementing module (w/ reloading)
+
+First change: add several functions for dealing with get expressions. Modules now know where they
+were defined. If a module is being reloaded, we allow it to be fully redefined with a new module
+object and all.
+
+
 ** Proposal: module names and paths
 
 Module search path should be ~./:/usr/local/lib/fn/modules:/usr/lib/fn/modules~. I will hard-code this
@@ -1316,3 +1323,10 @@ Some nice things we could do next:
 - replace local variable environments with numeric arrays, allowing direct access of local variable
   cells
 - 
+
+** Proposal: Method generalization
+
+#+BEGIN_SRC fn
+(def ((add-method String (or Int Float)) left right)
+  (append left right))
+#+END_SRC

@@ -221,6 +221,11 @@
     (fn-defmethod "cons" (seq-sym) (make-param-list :pos `((,x-sym) (,seq-sym)))
       ((list-class-sym) $(cons (car $) (cadr $))))
 
+    (fn-defun "gensym"
+      (unless (length= args 0)
+        (runtime-error "too many arguments for gensym"))
+      (fngensym))
+
     (fn-defun "+"
       (when (length< args 1)
         (runtime-error "too few arguments for +"))
@@ -290,6 +295,14 @@
 (defun fnintern (name &optional (interpreter *interpreter*))
   "Get an internal symbol using INTERPRETER's symbol table."
   (symtab-intern name (interpreter-symtab interpreter)))
+
+(defun fngensym (&optional (interpreter *interpreter*))
+  "Get an uninterned symbol that still has a unique ID."
+  (let ((st (interpreter-symtab interpreter)))
+    (with-slots (fn.values::next-id) st
+      (incf (slot-value st 'fn.values::next-id))
+      (fn.values::make-sym :name (format nil "GENSYM-~a" fn.values::next-id)
+                          :id fn.values::next-id))))
 
 (setf *interpreter* (init-interpreter #'init-interpreter-hook))
 (setf *current-env* (init-env nil nil (car (interpreter-modules *interpreter*))))
@@ -393,10 +406,10 @@
        (eval-fn (car args) (cdr args)))
       ((eq op get-sym)
        (eval-get (car args) (cdr args)))
-      ((eq op get-field-sym)
-       (eval-get-field (car args) (cdr args)))
       ((eq op if-sym)
        (eval-if (car args) (cadr args) (caddr args)))
+      ((eq op import-sym)
+       (eval-import (code-data (car args)) (cdr args)))
       ((eq op let-sym)
        (eval-let (car args) (cdr args)))
       ((eq op quasiquote-sym)
@@ -409,9 +422,8 @@
        (runtime-error "unquote outside of quasiquote"))
       ((eq op unquote-splice-sym)
        (runtime-error "unquote-splice outside of quasiquote"))
-      ((and (listp op)
-            (eq (car op) get-sym))
-       (eval-get-op-list c op args))
+      ((code-dotted-get? (code-car c))
+       (eval-get-op-list c (code-car c) args))
       ((not (sym? op)) (eval-funcall c))
       ;; check for macros
       (t (aif (get-macro *current-env* op)
@@ -426,22 +438,35 @@
   (and (code-list? c)
        (eq (code-car c) get-sym)))
 
-(defun eval-get-op-list (c op args-code)
-  "Evaluate a list where the CAR is a get operation."
-  (if (code-quoted-sym? (code-caddr op))
-      (let ((key (eval-code (code-caddr op)))
-            (get-obj (eval-code (code-cadr op))))
-        (if (fnmodule? get-obj)
-            (aif (get-module-macro get-obj key)
-                 (let ((code (expand-macro it c)))
-                   (validate-code code)
-                   (eval-code code))
-                 (call-obj (get-key get-obj key)
-                           (mapcar #'eval-code args-code)))))
-      (call-obj (eval-code op) (mapcar #'eval-code args-code))))
+(defun var-module (obj)
+  (aif (get-module-cell *current-env* obj)
+       (if (fnmodule? (cell-value it))
+           (cell-value it)
+           nil)
+       nil))
 
-(defun bind-params (param-list args outer-env)
-  "Extend OUTER-ENV with variable bindings created by PARAM-LIST and ARGS."
+(defun dotted-get-macro (root keys)
+  ;; TODO: adjust to allow descending macros with multiple keys
+  (let ((next-mod (aif (get-module-cell (current-module) root)
+                       (cell-value it)
+                       nil)))
+    (if (and (fnmodule? next-mod)
+             (= (length keys) 1))
+        (get-module-macro next-mod (car keys))
+        nil)))
+
+(defun eval-get-op-list (c op-code args-code)
+  "Evaluate a list where the head is a dotted get form."
+  (let ((root (dotted-get-root op-code))
+        (keys (dotted-get-keys op-code)))
+    (aif (dotted-get-macro root keys)
+         (let ((code (expand-macro it c)))
+           (validate-code code)
+           (eval-code code))
+         (eval-funcall c))))
+
+(defun params-alist (param-list args outer-env)
+  "Get an ALIST from parameter symbols to argument values."
   (with-slots (pos keyword vari) param-list
     (labels ((get-optional (p)
                (if (cdr p)
@@ -499,10 +524,15 @@
                    (if args
                        (runtime-error "Too many arguments")
                        nil))))
-      (let* ((binding-alist (bind-positional nil pos args))
-             (*current-env* (init-env (mapcar #'car binding-alist) outer-env)))
-        (mapc $(set-var (car $) (cdr $)) binding-alist)
-        *current-env*))))
+      (bind-positional nil pos args))))
+
+(defun bind-params (param-list args outer-env)
+  "Extend OUTER-ENV with variable bindings created by PARAM-LIST and ARGS."
+  (let* ((binding-alist (remove-if $(eq (car $) wildcard-sym)
+                                   (params-alist param-list args outer-env)))
+         (*current-env* (init-env (mapcar #'car binding-alist) outer-env)))
+    (mapc $(set-var (car $) (cdr $)) binding-alist)
+    *current-env*))
 
 (defun expand-macro (macro-fun c)
   (with-slots (filename line column) (code-origin c)
@@ -510,7 +540,7 @@
     (let* ((origin (make-origin :filename filename
                                 :line line
                                 :column column
-                                :macro (->string (code-data (code-car c)))))
+                                :macro (format nil "~a" (code-data (code-car c))))) 
            (args (mapcar #'code->fnvalue (code-cdr c))))
       (fnvalue->code (call-fun macro-fun args) origin))))
 
@@ -854,11 +884,6 @@
       (fn-error "string index out of bounds: ~a" (->string key))
       (aref obj (truncate key))))
 
-(defun eval-get-field (obj-code fields-code)
-  (let ((obj (eval-code obj-code))
-        (fields (mapcar #'eval-code fields-code)))
-    (reduce #'get-field fields :initial-value obj)))
-
 (defun get-field (obj field)
   (cond
     ((fnclass? obj) (fnclass-get-field obj field))
@@ -898,6 +923,47 @@
             (eq b false))
         (eval-code else)
         (eval-code then))))
+
+;;; import
+(defun eval-import (sym as-args)
+  (let ((new-name (if as-args
+                      (code-data (cadr as-args))
+                      sym)))
+    ;; check if the symbol is already bound
+    (aif (get-module-cell (current-module) new-name)
+         ;; if we're reloading the same module as was in that variable before, that's ok, so we
+         ;; set the value cell to NULL. Otherwise, we let SAFE-ADD-GLOBAL binding semantics
+         ;; decide what to do.
+         (when (and (fnmodule? (cell-value it))
+                    (eq (fnmodule-name (cell-value it)) sym))
+           (runtime-warning "import: reloading module ~s" (sym-name sym))
+           ;; FIXME: deleting the value cell probably will cause optimization bugs
+           (add-global-cell *current-env* new-name nil))
+         nil)
+    (let ((mod (init-import-module sym)))
+      ;; load the module code
+      (unless mod
+        (runtime-error "import: couldn't find module by name ~s" (sym-name sym)))
+      (handler-case (let ((*current-env* (init-env nil nil mod)))
+                      (eval-file (fnmodule-loaded-from mod)))
+        (fn-error (x)
+          (runtime-error "error importing ~s:~%~a"
+                         (sym-name sym)
+                         x)))
+      ;; set the variable and add to the modules list
+      (safe-add-global new-name mod nil "import")
+      (push mod (interpreter-modules *interpreter*))
+      mod)))
+
+(defun eval-file (path)
+  (handler-case
+      (with-open-file (in path :direction :input)
+        (->> (fn.scanner:scan in path)
+          (fn.parser:parse)
+          (mapc #'eval-ast)))
+    (sb-ext:file-does-not-exist ()
+      (runtime-error "Error loading file: file ~s does not exist" path)))
+  fnnull)
 
 ;;; let
 (defun eval-let (bindings body)
@@ -978,17 +1044,14 @@
 ;;; set
 (defun eval-set (place value-code)
   (cond
-    ((code-sym? place) (set-var (code-data place) (eval-code value-code)))
-    ((code-list? place)
-     (cond ((eq (code-data (code-car place)) get-field-sym)
-            (set-field (eval-code (code-cadr place))
-                       (mapcar #'eval-code (code-cddr place))
-                       (eval-code value-code)))
-           ((eq (code-data (code-car place)) get-sym)
-            (set-key (eval-code (code-cadr place))
-                     (mapcar #'eval-code (code-cddr place))
-                     (eval-code value-code)))
-           (t (runtime-error "set: unrecognized set place"))))
+    ((code-sym? place) (set-var (code-data place)
+                                (eval-code value-code)))
+    ((code-get-expr? place)
+     (let* ((root-obj (eval-code (code-cadr place)))
+            (keys (code-cddr place)))
+       (set-key root-obj
+                (mapcar #'eval-code keys)
+                (eval-code value-code))))
     (t (runtime-error "set: unrecognized set place"))))
 
 (defun set-field (obj0 fields value)

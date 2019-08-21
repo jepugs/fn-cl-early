@@ -20,8 +20,8 @@
   (:use :cl :fn.util :fn.ast :fn.values)
   (:export :code :origin :data :make-code :code-origin :code-data :code? :code-intern :ast->code
            :code-list? :code-sym? :code-sym-name :code-sym-id
-           :code-literal? :code-quoted-sym? :code-op-is :code->fnvalue :fnvalue->code
-           :code->param-list
+           :code-literal? :code-quoted-sym? :code->fnvalue :fnvalue->code :code->param-list
+           :code-dotted-get? :dotted-get-root :dotted-get-keys :code-get-expr?
            :validate-code
            ;; symbol names (consider removing)
            :bracket-sym-name :brace-sym-name :dollar-sym-name :dot-sym-name
@@ -136,10 +136,9 @@
   (cddr (code-data c)))
 
 (defun code-cadar (c)
-  (code-car (code-cdar c)))
+  (car (code-cdar c)))
 (defun code-caddr (c)
-  (code-car (code-cddr c)))
-
+  (car (code-cddr c)))
 
 (defun code-literal? (c)
   (with-slots (data) c
@@ -152,11 +151,35 @@
          (every #'code-sym? data)
          (eq (code-data (car data)) quote-sym))))
 
-(defun code-op-is (c op-name)
-  "Check whether C has a certain symbol in its operator position. Assumes C contains a list."
-  (with-slots (data) c
-    (and (code-sym? (car data))
-         (string= (code-sym-name (car data)) op-name))))
+(defun code-get-expr? (c)
+  "Tell if an expression is a valid get expression"
+  (and (code-list? c)
+       (eq (code-data (code-car c)) get-sym)
+       (not (length< (code-cdr c) 2))))
+
+(defun code-dotted-get? (c)
+  "Tell if an expression is a dotted get, aka a get expression where the object code is a
+ symbol (variable) or another dotted get and the field names are all quoted symbols."
+  (and (code-get-expr? c)
+       (every #'code-quoted-sym? (code-cddr c))
+       (or (code-sym? (code-cadr c))
+           (code-dotted-get? (code-cadr c)))))
+
+(defun dotted-get-root (c)
+  "Get the sym corresponding to the root object of a dotted get. Assumes C satisfies
+ CODE-DOTTED-GET."
+  (if (code-list? (code-cadr c))
+      (dotted-get-root (code-cadr c))
+      (code-data (code-cadr c))))
+
+(defun dotted-get-keys (c)
+  "Get a list of the keys of a dotted get in the order they would be applied."
+  (let ((keys (mapcar $(code-data (code-cadr $))
+                      (code-cddr c))))
+    (cond ((code-list? (code-cadr c))
+           (append (dotted-get-keys (code-cadr c))
+                   keys))
+          (t keys))))
 
 (defun code->fnvalue (c)
   (with-slots (data) c
@@ -168,10 +191,10 @@
   "Takes a list of code objects and generates a param-list"
   (let* ((non-vari
           (take-while $(not (and (code-sym? $)
-                                 (string= (code-sym-name $) "&")))
+                                 (eq (code-data $) amp-sym)))
                       lst))
          (pos (remove-if-not $(or (and (code-sym? $)
-                                       (not (string= (code-sym-name $) "&")))
+                                       (not (eq (code-data $) amp-sym)))
                                   (and (code-list? $)
                                        (code-sym? (code-car $))
                                        (not (code-quoted-sym? $))))
@@ -181,7 +204,7 @@
                                            (code-quoted-sym? (code-car $))))
                                  non-vari))
          (vari (if (some $(and (code-sym? $)
-                               (string= (code-sym-name $) "&"))
+                               (eq (code-data $) amp-sym))
                          lst)
                    (code-data (car (last lst)))
                    nil)))
@@ -190,8 +213,11 @@
                                        (cons (code-data (code-car $))
                                              (code-cadr $)))
                                   pos)
+                     ;; keywords with no specified value default to null
                      :keyword (mapcar $(if (code-quoted-sym? $)
-                                           (cons (code-data (code-cadr $)) nil)
+                                           (cons (code-data (code-cadr $))
+                                                 (make-code (code-origin $)
+                                                            null-sym))
                                            (cons (code-data (code-cadar $))
                                                  (code-cadr $)))
                                       keyword)
@@ -236,7 +262,7 @@
                ((string= op-name "dollar-fn") (validate-dollar-fn o args))
                ((string= op-name "fn") (validate-fn o args))
                ((string= op-name "get") (validate-get o args))
-               ((string= op-name "get-field") (validate-get-field o args))
+               ((string= op-name "import") (validate-import o args))
                ((string= op-name "let") (validate-let o args))
                ((string= op-name "quote") (validate-quote o args))
                ((string= op-name "quasiquote") (validate-quasiquote o args))
@@ -281,14 +307,8 @@
                          "non-keyword parameters cannot follow keyword parameters"))
                       (check-params (cdr lst) nil nil))
 
-                     ;; required keyword argument
+                     ;; keyword argument with null default value
                      ((code-quoted-sym? p)
-                      (when opt
-                        (fn-error
-                         o
-                         "~a~a"
-                         prefix
-                         "required keyword parameters cannot follow optional parameters"))
                       (check-params (cdr lst) t nil))
 
                      ;; optional arguments
@@ -343,6 +363,12 @@
     (fn-error o "odd number of arguments to cond"))
   (validate-exprs args))
 
+(defun valid-place-name? (x)
+  "Tell if code X names either a variable or a place in a module (without checking for module
+ existence)."
+  (or (code-sym? x)
+      (code-dotted-get? x)))
+
 (defun validate-def (o args)
   (check-arg-length>= o args 2 "def")
   (let ((place (car args)))
@@ -362,7 +388,7 @@
       ;; method definition
       ((and (code-list? place)
             (code-list? (code-car place))
-            (code-sym? (code-caar place)))
+            (valid-place-name? (code-caar place)))
        (validate-params o
                         (code-cdr place)
                         "in method definition parameters: ")
@@ -421,8 +447,19 @@
 (defun validate-get (o args)
   (declare (ignore o args)))
 
-(defun validate-get-field (o args)
-  (declare (ignore o args)))
+(defun validate-import (o args)
+  (check-arg-length>= o args 1 "import")
+  (unless (code-sym? (car args))
+    (fn-error o "import: module name must be a symbol"))
+  (cond ((length= args 1) nil)
+        ((length= args 3)
+         ;; check for 'as
+         (unless (and (code-quoted-sym? (cadr args))
+                      (eq (code-data (code-cadr (cadr args))) as-sym))
+           (fn-error o "illegal arguments to import"))
+         (unless (code-sym? (caddr args))
+           (fn-error o "import: as value must be a symbol")))
+        (t (fn-error o "wrong number of arguments for import"))))
 
 (defun validate-let-bindings (o x)
   (unless (code-list? x)
@@ -476,4 +513,7 @@
   (fn-error o "unquote-splice outside of quasiquote"))
 
 (defun validate-set (o args)
-  (declare (ignore o args)))
+  (check-arg-length= o args 2 "set")
+  (unless (or (code-get-expr? (car args))
+              (code-sym? (car args)))
+    (fn-error o "malformed place in set")))

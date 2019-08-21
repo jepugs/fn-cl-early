@@ -23,7 +23,7 @@
     :message "wrong number of arguments for quote")
 
 ;;; apply
-(define-error-test (eval-str "(apply 2)")
+(define-error-test (validate-code (str->code "(apply 2)"))
     :message "too few arguments for apply")
 
 ;; cond
@@ -42,6 +42,16 @@
 (define-error-test (validate-code (str->code "(def ((x) 17) 18)"))
     :message "in method definition parameters: malformed parameter")
 
+;; test dotted gets
+(define-test (code-dotted-get? (str->code "x.y")) t)
+(define-test (code-dotted-get? (str->code "x.y.z")) t)
+(define-test (code-dotted-get? (str->code "x.y.z.w")) t)
+(define-test (code-dotted-get? (str->code "(get x 'y)")) t)
+(define-test (code-dotted-get? (str->code "(get x y)")) nil)
+(define-test (code-dotted-get? (str->code "(get x.y 'z)")) t)
+(define-test (code-dotted-get? (str->code "(get x.y z)")) nil)
+(define-test (dotted-get-root (str->code "(get _.y z)")) wildcard-sym)
+
 (define-error-test (validate-code (str->code "(defvar x)"))
     :message "wrong number of arguments for defvar")
 
@@ -57,6 +67,22 @@
 (define-error-test (validate-code (str->code "(let (1 2) expr)"))
     :message "let vars must be symbols")
 
+;; import
+(define-error-test (validate-code (str->code "(import)"))
+    :message "too few arguments for import")
+(define-error-test (validate-code (str->code "(import seq)"))
+    :no-error t)
+(define-error-test (validate-code (str->code "(import seq 'as)"))
+    :message "wrong number of arguments for import")
+(define-error-test (validate-code (str->code "(import seq 'as 2)"))
+    :message "import: as value must be a symbol")
+(define-error-test (validate-code (str->code "(import seq 'as 'y)"))
+    :message "import: as value must be a symbol")
+(define-error-test (validate-code (str->code "(import seq 'as x)"))
+    :no-error t)
+(define-error-test (validate-code (str->code "(import seq 'nas x)"))
+    :message "illegal arguments to import")
+
 ;; quasiquote
 (define-error-test (validate-code (str->code "`,2")) :no-error t)
 (define-error-test (validate-code (str->code "`,,2"))
@@ -68,6 +94,14 @@
     :message "unquote outside of quasiquote")
 (define-error-test (validate-code (str->code ",@test"))
     :message "unquote-splice outside of quasiquote")
+
+;; set
+(define-error-test (validate-code (str->code "(set x)"))
+    :message "wrong number of arguments for set")
+(define-error-test (validate-code (str->code "(set 2 3)"))
+    :message "malformed place in set")
+(define-error-test (validate-code (str->code "(set (get x 2) 3)"))
+    :no-error t)
 
 (run-tests)
 
