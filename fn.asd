@@ -21,4 +21,5 @@
                (:file "values")
                (:file "code")
                (:file "eval")
+               (:file "boot")
                (:file "main")))

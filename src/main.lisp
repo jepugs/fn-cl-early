@@ -40,29 +40,31 @@
             (fn-error (x)
               (princ x)
               (terpri))))
-        (loop (handler-case
-                  (progn
-                    (princ "> ")
-                    (finish-output)
+        (let* ((*interpreter* (init-interpreter))
+               (*current-env* (init-env nil)))
+          (loop (handler-case
+                    (progn
+                      (princ "> ")
+                      (finish-output)
 
-                    (mapcar $(fnprintln (eval-ast $))
-                            (parse (scan-from-string (read-line)))))
+                      (mapcar $(fnprintln (eval-ast $))
+                              (parse (scan-from-string (read-line)))))
 
-                ;; exit on SIGINT
-                (sb-int::interactive-interrupt (x)
-                  (princ x)
-                  (terpri)
-                  (sb-ext:exit :code -1))
+                  ;; exit on SIGINT
+                  (sb-int::interactive-interrupt (x)
+                    (princ x)
+                    (terpri)
+                    (sb-ext:exit :code -1))
 
-                ;; exit on end of file
-                (end-of-file ()
-                  (terpri)
-                  (sb-ext:exit :code 0))
+                  ;; exit on end of file
+                  (end-of-file ()
+                    (terpri)
+                    (sb-ext:exit :code 0))
 
-                ;; print out and continue on fn-error
-                (fn-error (x)
-                  (princ x)
-                  (terpri)))))))
+                  ;; print out and continue on fn-error
+                  (fn-error (x)
+                    (princ x)
+                    (terpri))))))))
 
 (defun show-usage ()
   (format t "Usage: fn [script file]~%"))

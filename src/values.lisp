@@ -48,7 +48,7 @@
    :env-module :env-table :get-class
    :fnmodule :name :loaded-from :vars :macros :make-fnmodule :fnmodule-name :fnmodule-vars
    :fnmodule-macros :fnmodule-loaded-from :add-module-cell :fnmodule? :find-module-path
-   :*module-search-path* :init-import-module
+   :*module-search-path* :init-import-module :module-copy-bindings
    ;; functions
    :param-list :make-param-list :pos :keyword :vari :param-list-pos :param-list-keyword
    :param-list-vari :param-list-vars :param-list-eqv
@@ -59,7 +59,7 @@
    :fnmethod :make-fnmethod :fnmethod? :get-impl :set-impl :fnmethod-params :impls :dispatch-params
    :fnmethod-dispatch-params :fnmethod-impls :fnmethod-default-impl :default-impl
    ;; pretty printing
-   :->string :fnprint :fnprintln :->code-string :fnprint-code :fnprintln-code))
+   :show :fnprint :fnprintln))
 
 (in-package :fn.values)
 
@@ -226,7 +226,7 @@
   (apply #'concatenate 'string
          (mapcar $(if (string? $)
                       $
-                      (->string $))
+                      (show $))
                  objects)))
 (defun string? (x) (stringp x))
 
@@ -327,16 +327,27 @@
                (car it)
                nil))
         *module-search-path*))
-(defun init-import-module (sym)
+
+(defun module-copy-bindings (dest src)
+  "Copy all variables and macros from module SRC into DEST."
+  (with-slots (vars macros) dest
+    (maphash $(setf (gethash $0 vars) $1)
+             (fnmodule-vars src))
+    (maphash $(setf (gethash $0 macros) $1)
+             (fnmodule-macros src)))
+  dest)
+
+(defun init-import-module (sym &optional built-in-module)
   "If sym name is found in the module search path, returns an empty module with the LOADED-FROM and
- NAME fields set. Otherwise returns null."
+ NAME fields set. Otherwise returns null. If BUILT-IN-MODULE is an FNMODULE, then bindings from it
+ are copied to any returned modules."
   (aif (find-module-path (sym-name sym))
        (let ((res (make-fnmodule :name sym
                                  :loaded-from it)))
-         (add-module-cell res sym (make-cell :value res))
+         (when built-in-module
+           (module-copy-bindings res built-in-module))
          res)
        nil))
-
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -423,8 +434,8 @@
 
 ;;;; pretty printing
 
-(defun ->code-string (x)
-  "Print objects as expressions"
+(defun show (x)
+  "Convert an fn object to a human-readable string."
   (cond
     ((empty? x) "[]")
     ((fnnull? x) "null")
@@ -432,35 +443,21 @@
     ((false? x) "false")
     ((num? x) (format nil "~f" x))
     ((fnlist? x)
-     (format nil "[~{~a~^ ~}]" (fnmapcar #'->code-string x)))
+     (format nil "[~{~a~^ ~}]" (fnmapcar #'show x)))
+    ;; TODO: 
     ((string? x) (concatenate 'string "\"" x "\""))
-    ((sym? x) (concatenate 'string
-                           "'"
-                           (slot-value x 'name)))
-    ((fnfun? x) "#<FUNCTION>")))
-
-(defun ->string (x)
-  "Convert an fn object to a string."
-  (cond
-    ((empty? x) "[]")
-    ((fnnull? x) "null")
-    ((true? x) "true")
-    ((false? x) "false")
-    ((num? x) (format nil "~f" x))
-    ((fnlist? x)
-     (format nil "[~{~a~^ ~}]" (fnmapcar #'->string x)))
-    ((string? x) x)
     ((sym? x) (slot-value x 'name))
     ((fnfun? x) "#<FUNCTION>")
     ((fnclass? x) (concatenate 'string
-                               "#<CLASS: "
+                               "#<CLASS:"
                                (sym-name (fnclass-name x))
                                ">"))
     ((fnmodule? x)
      (concatenate 'string
-                  "#<MODULE: "
+                  "#<MODULE:"
                   (sym-name (fnmodule-name x))
                   ">"))
+    ((fnmethod? x) "#<METHOD>")
     ((fnobj? x)
      (format nil
              "(~a ~{~a~^ ~})"
@@ -470,17 +467,11 @@
                (ht->plist)
                (group 2)
                (reverse)
-               (mapcar $(->string (cell-value (cadr $)))))))
+               (mapcar $(show (cell-value (cadr $)))))))
     (t "#<UNRECOGNIZED-FOREIGN-OBJECT>")))
 
 (defun fnprint (x &optional (stream *standard-output*))
-  (princ (->string x) stream))
+  (princ (show x) stream))
 (defun fnprintln (x &optional (stream *standard-output*))
   (fnprint x stream)
-  (terpri stream))
-
-(defun fnprint-code (x &optional (stream *standard-output*))
-  (princ (->code-string x) stream))
-(defun fnprintln-code (x &optional (stream *standard-output*))
-  (fnprint-code x stream)
   (terpri stream))
