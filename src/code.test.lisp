@@ -22,6 +22,10 @@
 (define-error-test (validate-code (str->code "(quote 1 2)"))
     :message "wrong number of arguments for quote")
 
+;;; apply
+(define-error-test (eval-str "(apply 2)")
+    :message "too few arguments for apply")
+
 ;; cond
 (define-error-test (validate-code (str->code "(cond)"))
     :message "too few arguments for cond")

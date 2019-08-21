@@ -59,27 +59,7 @@
 
 (eval-when (:load-toplevel :compile-toplevel :execute)
 
-  (defparameter special-op-dispatch nil)
-
   (defparameter builtin-globals nil)
-
-  (defmacro def-op (name params &body body)
-    "DEF-OP defines a special operator in fn by adding it to SPECIAL-OP-DISPATCH.
-
- NAME       : a string denoting the operator's name
- PARAMS     : common lisp lambda list describing arguments
- BODY       : function body describing the operator's behavior
-
- All the names in the ARG-SPECs list are bound to corresponding arguments for use in the function
- body. In addition, variables named C, ENV, and INTERPRETER are bound holding evaluation
- parameters (C is the code object for the current expression)."
-    `(push
-      (cons ,name
-            (lambda (c env interpreter)
-              (declare (ignorable c env interpreter))
-              (destructuring-bind ,params (code-cdr c)
-                ,@body)))
-      special-op-dispatch))
 
   (defmacro def-builtin (name value)
     "Define a built-in variable"
@@ -117,16 +97,20 @@
   (def-builtin-class string-class-sym
       :constructor $(apply #'fnstring $))
 
-  (defun-builtin "+" args
-    (num (reduce #'+ args)))
-  (defun-builtin "-" args
-    (num (reduce #'- args)))
-  (defun-builtin "*" args
-    (num (reduce #'* args)))
-  (defun-builtin "/" args
-    (num (reduce #'/ args)))
-  (defun-builtin "=" args
-    (if (apply #'equal args)
+  (defun-builtin ">" args
+    (if (apply #'> args)
+        true
+        false))
+  (defun-builtin "<" args
+    (if (apply #'< args)
+        true
+        false))
+  (defun-builtin ">=" args
+    (if (apply #'>= args)
+        true
+        false))
+  (defun-builtin "<=" args
+    (if (apply #'<= args)
         true
         false))
   (defun-builtin "print" args
@@ -157,49 +141,8 @@
 (defparameter *current-env* nil "Lexical environment used for evaluation")
 (defparameter *interpreter* nil "Interpreter used for evaluation")
 
-(defun init-interpreter ()
-  "Initialize an interpreter with built-in globals and symbols and a default module."
-  (let* ((symtab (make-symtab))
-         (mod (make-fnmodule :name (symtab-intern "__default" symtab)))
-         (res (make-interpreter :modules (list mod) :symtab symtab)))
-    (loop for x in builtin-globals
-       do (add-module-cell mod
-                           (fnintern (car x) res)
-                           (make-cell :value (cdr x))))
-    res))
-
-(defun init-env (syms &optional (parent *current-env*) (module (current-module)))
-  "Create an ENV with uninitialized value cells for each symbol in SYMS."
-  (let ((table (make-hash-table :size (min (ceiling (* 1.5 (length syms)))
-                                           10))))
-    (map nil
-         $(setf (gethash (sym-id $) table)
-                (make-cell :mutable t))
-         syms)
-    (make-env :table table
-              :module module
-              :parent parent)))
-
-(defun fnintern (name &optional (interpreter *interpreter*))
-  "Get an internal symbol using INTERPRETER's symbol table."
-  (symtab-intern name (interpreter-symtab interpreter)))
-
-(setf *interpreter* (init-interpreter))
-(setf *current-env* (init-env nil nil (car (interpreter-modules *interpreter*))))
-
 (defun current-module ()
   (env-module *current-env*))
-
-
-(defun search-for-module (str)
-  (runtime-error "Could not find module ~a" str))
-
-(defun find-module (sym)
-  (aif (find-if $(eq sym (fnmodule-name $))
-                (interpreter-modules *interpreter*))
-       (cdr it)
-       (search-for-module (sym-name sym))))
-
 
 (defun safe-add-global (sym value &optional mutable function-name)
   "Add a global variable without trampling any definitions."
@@ -220,6 +163,146 @@
   (aif (get-cell *current-env* name)
        (cell-value it)
        (runtime-error "Undefined variable ~s" (sym-name name))))
+
+(defmacro with-syms (names &body body)
+  `(let ,(mapcar $`(,(intern (concatenate 'string (string-upcase $) "-SYM"))
+                     (fnintern ,$))
+                 names)
+     ,@body))
+
+(defmacro fn-defmethod (name dispatch-params params &body impls)
+  (with-gensyms (method dispatch-params-var params-var)
+    `(let* ((,dispatch-params-var (list ,@dispatch-params))
+            (,params-var ,params)
+            (,method (make-fnmethod :params ,params-var
+                                    :dispatch-params ,dispatch-params-var)))
+       (safe-add-global (fnintern ,name) ,method nil "bootstrap: ")
+       ,@(mapcar $`(set-impl ,method
+                             (mapcar #'get-var (list ,@(car $)))
+                             (make-fnfun :body ,(cadr $)))
+                 impls))))
+
+(defun init-interpreter (&optional post-init-hook)
+  "Initialize an interpreter with built-in globals and symbols and a default module."
+  (let* ((symtab (make-symtab))
+         (mod (make-fnmodule :name (symtab-intern "__default" symtab)))
+         (*interpreter* (make-interpreter :modules (list mod) :symtab symtab))
+         (*current-env* (init-env nil nil mod)))
+    (loop for x in builtin-globals
+       do (add-module-cell mod
+                           (fnintern (car x))
+                           (make-cell :value (cdr x))))
+    ;; call the hook after setting *interpreter* and *current-env*
+    (if post-init-hook
+        (funcall post-init-hook))
+    *interpreter*))
+
+(defmacro fn-defun (name &body body)
+  `(safe-add-global (fnintern ,name)
+                    (make-fnfun :body (lambda (args) ,@body))))
+
+(defun init-interpreter-hook ()
+  (with-syms ("x" "seq")
+    (fn-defmethod "head" (seq-sym) (make-param-list :pos `((,seq-sym)))
+      ((list-class-sym) $(if (eq (car $) empty)
+                             fnnull
+                             (caar $)))
+      ((string-class-sym) $(if (= (length (car $)) 0)
+                               fnnull
+                               (string (aref (car $) 0)))))
+    (fn-defmethod "tail" (seq-sym) (make-param-list :pos `((,seq-sym)))
+      ((list-class-sym) $(if (eq (car $) empty)
+                             empty
+                             (cdar $)))
+      ((string-class-sym) $(if (= (length (car $)) 0)
+                               ""
+                               (subseq (car $) 1))))
+
+    (fn-defmethod "cons" (seq-sym) (make-param-list :pos `((,x-sym) (,seq-sym)))
+      ((list-class-sym) $(cons (car $) (cadr $))))
+
+    (fn-defun "+"
+      (when (length< args 1)
+        (runtime-error "too few arguments for +"))
+      (unless (every #'num? args)
+        (runtime-error "Arguments to + must be numbers"))
+      (num (apply #'+ args)))
+    (fn-defun "-"
+      (when (length< args 1)
+        (runtime-error "too few arguments for -"))
+      (unless (every #'num? args)
+        (runtime-error "Arguments to - must be numbers"))
+      (num (apply #'- args)))
+    (fn-defun "/"
+      (when (length< args 1)
+        (runtime-error "too few arguments for /"))
+      (unless (every #'num? args)
+        (runtime-error "Arguments to / must be numbers"))
+      (num (apply #'/ args)))
+    (fn-defun "*"
+      (when (length< args 1)
+        (runtime-error "too few arguments for *"))
+      (unless (every #'num? args)
+        (runtime-error "Arguments to * must be numbers"))
+      (num (apply #'* args)))
+    (fn-defun "pow"
+      (unless (length= args 2)
+        (runtime-error "wrong number of arguments for *"))
+      (unless (every #'num? args)
+        (runtime-error "Arguments to pow must be numbers"))
+      (num (expt (car args) (cadr args))))
+
+    (fn-defun "="
+      (unless (length= args 2)
+        (runtime-error "wrong number of arguments for ="))
+      (if (equalp (car args) (cadr args))
+          true
+          false))
+
+    (fn-defun "load"
+      (unless (length= args 1)
+        (runtime-error "wrong number of arguments for load"))
+      (unless (stringp (car args))
+        (runtime-error "load: argument must be a string"))
+      (with-open-file (in (car args) :direction :input)
+        (let ((ast (fn.parser:parse (fn.scanner:scan in (car args)))))
+          (mapc $(handler-case (eval-ast $)
+                   (fn-error (x)
+                     (format t "Error encountered during load: ~a~%" x)))
+                ast)))
+      fnnull)
+
+    (fn-defun "runtime-error"
+      (runtime-error "~a" (->string (car args))))))
+
+(defun init-env (syms &optional (parent *current-env*) (module (current-module)))
+  "Create an ENV with uninitialized value cells for each symbol in SYMS."
+  (let ((table (make-hash-table :size (min (ceiling (* 1.5 (length syms)))
+                                           10))))
+    (map nil
+         $(setf (gethash (sym-id $) table)
+                (make-cell :mutable t))
+         syms)
+    (make-env :table table
+              :module module
+              :parent parent)))
+
+(defun fnintern (name &optional (interpreter *interpreter*))
+  "Get an internal symbol using INTERPRETER's symbol table."
+  (symtab-intern name (interpreter-symtab interpreter)))
+
+(setf *interpreter* (init-interpreter #'init-interpreter-hook))
+(setf *current-env* (init-env nil nil (car (interpreter-modules *interpreter*))))
+
+(defun search-for-module (str)
+  (runtime-error "Could not find module ~a" str))
+
+(defun find-module (sym)
+  (aif (find-if $(eq sym (fnmodule-name $))
+                (interpreter-modules *interpreter*))
+       (cdr it)
+       (search-for-module (sym-name sym))))
+
 
 (defun set-var (name value)
   (let ((cell (get-cell *current-env* name)))
@@ -314,28 +397,28 @@
        (eval-get-field (car args) (cdr args)))
       ((eq op if-sym)
        (eval-if (car args) (cadr args) (caddr args)))
+      ((eq op let-sym)
+       (eval-let (car args) (cdr args)))
       ((eq op quasiquote-sym)
-       (eval-quasiquote (cadr args)))
+       (eval-quasiquote (car args)))
       ((eq op quote-sym)
-       (eval-quote (cadr args)))
+       (eval-quote (car args)))
       ((eq op set-sym)
        (eval-set (car args) (cadr args)))
       ((eq op unquote-sym)
        (runtime-error "unquote outside of quasiquote"))
       ((eq op unquote-splice-sym)
        (runtime-error "unquote-splice outside of quasiquote"))
-      ((get-expr? op) (eval-get-op-list c op args))
+      ((and (listp op)
+            (eq (car op) get-sym))
+       (eval-get-op-list c op args))
       ((not (sym? op)) (eval-funcall c))
-      (t
-       (aif (assoc (sym-name op)
-                     special-op-dispatch
-                     :test #'equal)
-            (funcall (cdr it) c *current-env* *interpreter*)            
-            (aif (get-macro *current-env* op)
-                 (let ((code (expand-macro it c)))
-                   (validate-code code)
-                   (eval-code code))
-                 (eval-funcall c)))))))
+      ;; check for macros
+      (t (aif (get-macro *current-env* op)
+              (let ((code (expand-macro it c)))
+                (validate-code code)
+                (eval-code code))
+              (eval-funcall c))))))
 
 (defun get-expr? (c)
   "Tell if C is a get expression"
@@ -506,13 +589,13 @@
 (defun eval-cond (body)
   (let ((clauses (group 2 body)))
     (rlambda (src) (clauses)
-      (when (null src)
-        (runtime-error "every cond clause failed"))
-      (let ((x (eval-code (caar src))))
-        (if (or (eq x fnnull)
-                (eq x false))
-            (recur (cdr clauses))
-            (eval-code (cadar src)))))))
+      (if src
+          (let ((x (eval-code (caar src))))
+            (if (or (eq x fnnull)
+                    (eq x false))
+                (recur (cdr src))
+                (eval-code (cadar src))))
+          fnnull))))
 
 ;;; def
 (defun eval-def (name-or-proto value-or-body)
@@ -529,16 +612,16 @@
         (safe-add-global (code-data name-or-proto) v nil "def")
         v)))
 
-(defun eval-function-def (name params body)
-  (let ((fun (make-fnfun :params (code->param-list params)
+(defun eval-function-def (name params-code body)
+  (let ((fun (make-fnfun :params (code->param-list params-code)
                          :body body
                          :closure *current-env*)))
     (safe-add-global name fun nil "def")
     fun))
 
-(defun eval-method-def (name class-syms params body)
-  (let* ((cell (get-var name))
-         (m (if cell (cell-value cell))))
+(defun eval-method-def (name class-syms params-code body)
+  (let* ((m (aif (get-cell *current-env* name) (cell-value it) nil))
+         (params (code->param-list params-code)))
     (unless m
       (runtime-error "def: No such method ~s." (->string name)))
     (unless (fnmethod? m)
@@ -557,7 +640,7 @@
           (runtime-error "def: Method ~a already defined on types \"(~{~a~^ ~})\"."
                          (->string name)
                          (mapcar #'->string class-syms))
-          (set-impl m types (make-fnfun :params (code->param-list params)
+          (set-impl m types (make-fnfun :params params
                                         :body body
                                         :closure *current-env*))))))
 
@@ -591,7 +674,8 @@
   "Create a new method."
   (let ((m (make-fnmethod :params (code->param-list params)
                           :dispatch-params (mapcar #'code-data dispatch-params))))
-    (safe-add-global name m nil "defmethod")))
+    (safe-add-global name m nil "defmethod")
+    m))
 
 ;;; defvar
 (defun eval-defvar (name value)
@@ -816,7 +900,7 @@
         (eval-code then))))
 
 ;;; let
-(def-op "let" (bindings &rest body)
+(defun eval-let (bindings body)
   (let* ((binding-pairs (group 2 (code-data bindings)))
          (*current-env* (init-env (mapcar $(code-data (car $))
                                           binding-pairs))))
@@ -896,11 +980,11 @@
   (cond
     ((code-sym? place) (set-var (code-data place) (eval-code value-code)))
     ((code-list? place)
-     (cond ((eq (code-car place) get-field-sym)
+     (cond ((eq (code-data (code-car place)) get-field-sym)
             (set-field (eval-code (code-cadr place))
                        (mapcar #'eval-code (code-cddr place))
                        (eval-code value-code)))
-           ((eq (code-car place) get-sym)
+           ((eq (code-data (code-car place)) get-sym)
             (set-key (eval-code (code-cadr place))
                      (mapcar #'eval-code (code-cddr place))
                      (eval-code value-code)))

@@ -297,6 +297,12 @@
            nil)
        nil))
 
+;; functions with closures carry around a copy of the global environment, so we have to do this cute
+;; trick to stop infinite print loops
+(defmethod print-object ((object env) stream)
+  (with-slots (table module parent) object
+    (format stream "<ENV module=~s>" (sym-name (fnmodule-name module)))))
+
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -330,7 +336,7 @@
      (length= (cadr req-and-opt0) (length (cadr req-and-opt1)))
      ;; check same keyword param
      (set-equal (mapcar #'car (param-list-keyword p0))
-                (mapcar #'car (param-list-keyw)))
+                (mapcar #'car (param-list-keyword p1)))
      ;; check vari params
      (not (xor vari0 vari1)))))
 
@@ -351,6 +357,7 @@
   (body nil :type (or list function) :read-only t)
   ;; captured lexical environment
   (closure nil :read-only t))
+
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
