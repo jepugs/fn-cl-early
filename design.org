@@ -31,24 +31,6 @@ special syntax objects or creating a pattern-based DSL.
   macros to implement almost all of its features. This new version will be a proper interpreter.
 
 
-** Inspirations/Credit
-
-fn's design was strongly inspired by Clojure, Python, Common Lisp, and Haskell. All four of those
-are great programming languages. Honestly, if I could get a full version of Clojure that didn't need
-the JVM or the CLR, I might not have bothered making a new programming language, although I really
-don't care for pure functionality as much as Rich Hickey. In that respect I prefer Common Lisp. When
-you get down to it, Common Lisp can be massaged into a very good language and development
-environment using FOSS tools and libraries such as Quicklisp, Alexandria, and Emacs+SLIME. Common
-Lisp can be further customized to the extent that even built-in special forms and syntax can be
-overwritten, which is what I used to prototype early versions of fn. However, I have two serious
-problems with Common Lisp. Firstly, it is too much work to configure a Common Lisp environment
-compared to, say, Python or Haskell, which are essentially ready to go out of the box. While this
-can be overcome by patience, a more significant problem is that since Common Lisp is built out of
-so many different pieces, it feels very inconsistent in a way that is often jarring. Thus, I set out
-to build a programming language just, for myself, that took the good parts of Common Lisp and added
-some modern features.
-
-
 * Modules and Name Resolution
 
 ** Definition order
@@ -174,7 +156,7 @@ Example:
 (call-with-square-0 get-sq 6) ;=>16
 
 ;; call-with-square-1 treats sq as a dynamic variable
-(call-with-square-0 get-sq 6) ;=>36
+(call-with-square-1 get-sq 6) ;=>36
 
 #+END_SRC
 
@@ -900,7 +882,178 @@ When ~unquote-splice~ appears outside of a quasiquoted list, an error is generat
 This section is a bunch of garbage to help me remember things. I don't recommend trying to read
 this.
 
+** Proposal: module names and paths
+
+Module search path should be ~./:/usr/local/lib/fn/modules:/usr/lib/fn/modules~. I will hard-code this
+for now.
+
+There are several ways to import another module:
+
+#+BEGIN_SRC fn
+;; import creates a module variable
+(import sym)
+(import sym-or-string 'as name)
+;; import-from binds the specified names in the current module
+(import-from sym-or-string (names))
+#+END_SRC
+
+Note that modules may be imported using either symbols or strings. In the latter case, the string
+should be the pathname (either relative or absolute) of an fn source file, including the extension.
+If a symbol is used, then the module is equal to 
+
+*Impl. note:* import-from should use the same value cells in the new bindings as in the original
+module. This causes changes from one variable to propagate to changes from another.
+
+
+** Proposed pattern matching behavior
+
+#+BEGIN_SRC fn
+;;; syntax - case
+(case <obj>
+  <case-clauses*>)
+;;; where
+;; <case-clause> ::= <pattern> <expr>
+#+END_SRC
+
+A pattern is an expression that describes the structure of an object. A typical format for a pattern
+is this:
+
+#+BEGIN_SRC fn
+(<class-name> <class-args>) 
+
+;; e.g.
+(defclass (Vec2 x y))
+(def (on-axis? v)
+  (case v
+    (Vec2 0 _) true
+    (Vec2 _ 0) true
+    (Vec2 _ _) false))
+
+(on-axis? (Vec2 3 0))   ;=> true
+(on-axis? (Vec2 0 -2))  ;=> true
+(on-axis? (Vec2 3 1))   ;=> false
+(on-axis? 0)            ;=> runtime error
+#+END_SRC
+
+Unlike ~cond~, case will throw a runtime error if there are no matches.
+
+
+** Proposed extension: ~let~ pattern destructuring
+
+#+BEGIN_SRC fn
+;; code using current version of let
+(let (left-right (split "foo,bar" ",")
+      left left-right.hd
+      right (get left-right 1))
+  (String left " & " right)) ;=> "foo & bar"
+
+;; proposed extension
+(let ([left right] (split "foo,bar" ","))
+  (String left " & " right)) ;=> "foo & bar"
+#+END_SRC
+
+In this extension, we allow ~case~-like pattern destructuring in ~let~ bindings.
+
+A practical use of this extension would be to simulate multiple return values as shown in the
+example above. A function with multiple return values would simply return them as a list, and ~let~
+destructuring would make it convenient to recover the individual variables.
+
+*** Q: Which patterns do we allow?
+
+The one obvious requirement for patterns in let is that they have to bind variables.
+
+There are three proposed "logical" patterns to be accepted by ~case~: ~satisfies?~, ~and~, and ~or~. The
+first takes a function as an argument and matches if the function returns true when called with the
+object as an argument. ~satisfies?~ binds no variables. ~and~ matches when all the patterns in its
+arguments match and binds the last pattern's variables. ~or~ matches when any of the patterns in
+its arguments match and binds no variables.
+
+~let~ will not accept any logical patterns, as their behaviors are outside the scope of local variable
+definition.
+
+
+** Possible Alteration to Class/Object Structure
+
+Ok so hear me out.
+
+We have tables and structures (classes). Structures basically are tables but all the keys are
+symbols. The problem is dot syntax. Right now it calls ~(get obj 'key)~ but we'd rather that it called
+~(get-field obj 'key)~. Problems with this is that dot syntax is used to descend into module objects
+so we need to differentiate somehow.
+
+The current solution is this: provide a method, get-method, and use it to handle calls to get.
+Problem with this is that it makes every access operation have to do virtual dispatch. Yuck.
+
+Virtual dispatch works like this, by the way:
+- get the class of each dispatch arg
+- hash the list of classes to find the appropriate implementation function
+- call the function
+
+
+Potential Solutions:
+
+- change the behavior of get so that it doesn't invoke get-method
+  - in this case, there's no way to get the meta data of a module without (a) introducing special
+    module variables like ~__name__~ and ~__fields__~ (Python style) or (b) providing a different
+    special form/object type like ~(module-data <module>)~.
+  - this would make Tables and Modules into the only special classes that have different behavior
+  - alternatively, could turn all objects into generalized kv stores and encode ~__class__~ as a field
+    in each object. This would beg for a reimagining of what a class is and would probably be hard.
+- change the behavior of dot so that it has a different expansion (e.g. dotted-get)
+
+
 ** Standard library
+
+If you think about it, lazy lists and iterators are almost the same thing. They both compute the
+next value in a sequence. The main difference is that lazy lists have their intermediate results
+saved. This allows the same lazy list object to be used in multiple places while guaranteeing that
+each element will be evaluated at most once, and that unused elements will be evaluated never.
+
+Both of these constructs have the advantage of allowing sequence operations to be composed in a very
+efficient manner.
+
+It is fairly easy to go from one representation to another. 
+
+
+#+BEGIN_SRC fn
+(defclass (Iterator head next))
+
+(def (iter->list iter)
+  (loop (acc i) ([] iter)
+    (if iter
+        (recur (cons i.head acc) (i.next))
+        (reverse acc))))
+
+(defclass (LCons hd tl))
+(defclass (Lazy-List thunk))
+
+(def ((head Lazy-List) seq)
+  (case (seq.thunk)
+    (LCons hd _) hd
+    _            null))
+(def ((rest Lazy-List) seq)
+  (case (seq.thunk)
+    (LCons _ tl) tl
+    _            seq))
+
+(def ((cons Lazy-List) hd tl)
+  (let (x (LCons hd tl))
+    (Lazy-List (fn () x))))
+
+
+
+;; take and drop preserve the type of their sequence
+
+;; filter and map return lazy lists
+(def (map fun & lsts)
+  (if (any empty? lsts)
+      (Lazy-List [])
+      (lcons (apply fun (map head lsts))
+             (Lazy-List $(apply map fun (map tail lsts))))))
+
+
+
+#+END_SRC
 
 Math module:
 
@@ -913,6 +1066,8 @@ Math module:
 
 Sequence library:
 
+- any, every
+- cons
 - (method) append
 - (method) get-iter
 - (class) Iter
@@ -920,7 +1075,62 @@ Sequence library:
 - map, foldl, foldr
 - (replace subseq new-place seq)
 - (split subseq seq)
+- take, drop, take-while, drop-while, split, split-at
 
+
+** Transducers vs Lazy Lists
+
+Transducers are functions that transform reduction functions. map and filter are examples of
+reduction functions. Because these examples produce lists as their output, they are composable as
+transducers. For instance, a filter transducer would take a reduction function and apply it /after/
+applying the filter to the input sequence. A map transducer applies the mapping function before
+calling the transducer it's applied to. And so on.
+
+Transducers and lazy lists both allow reduction functions to be composed before their results are
+computed.
+
+Pros of transducers over lazy lists:
+- transducers are just functions
+- no new sequence data structures are required
+- don't need to save a new cons cell for every computation
+- clojure does this
+- simpler implementation because no memoization is needed
+
+Pros of lazy lists over transducers:
+- transducers compose in backwards order
+- the usual reduction functions (map, filter, etc) compose more intuitively using lazy lists
+- python does this
+- could use iterators in place of full lazy lists
+
+Efficiency: a transducer can be called lazily, so let's assume it is. Both approaches will then
+generate one sequence element at a time. To get this element, here's what happens:
+
+td
+- the FIRST transducer in the composition chain consumes elements and passes them to
+  the second
+- and so on
+- the FINAL transducer generates an object and returns it
+- this chain is evaluated lazily so that the initial input will only be processed up to the point
+  where the first element in the final output is generated
+
+- the last transducer in the chain must be lazy
+
+llist
+- the LAST lazy list function in the composition chain is asked to compute its head
+- this function's input is another lazy list, so we ask for elements from that lazy list. Each
+  element we request is saved in a cons cell along the way. Once we've consumed all these elements
+  from the intermediate list, they are garbage and can be collected.
+- the second-to-last composed function asks for elements from the third  and so on
+
+- a lazy cons cell holding a function is returned
+- the intermediate value is computed and saved to the cons cell
+- the cons cell is thrown away after the next value is used
+
+So, every time an intermediate operation produces an object, one intermediate lazy cons cell is
+created.
+
+Third choice: iterators. It is possible to just create lazy iterator objects which don't have any
+cons cells. This may be an appealing option.
 
 
 ** Version 0 Spec
@@ -1090,3 +1300,19 @@ to 62-bit precision by dropping the two rightmost digit, allowing use of x87 har
 passing around of numbers, etc, much more efficient. A downside of this approach is that it would
 give us less than the maximum 256 possible type tags that exist right now.
 
+
+** Proposal: Multipass optimization
+
+First pass would macroexpand and then evaluate all the forms in order. After this first pass, we
+would have all of this information:
+
+- types of all immutable global variables
+- function parameter lists
+- fully macro-expanded function bodies
+
+Some nice things we could do next:
+
+- replace (global, non-dynamic) variables with direct references to their value cells
+- replace local variable environments with numeric arrays, allowing direct access of local variable
+  cells
+- 
