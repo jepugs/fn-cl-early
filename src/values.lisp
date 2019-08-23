@@ -57,7 +57,7 @@
    :fnclass :fields :constructor :fnclass-name :make-fnclass :fnclass-fields :fnclass-constructor :fnclass?
    :fnobj :class :contents :make-fnobj :fnobj-class :fnobj-contents :fnobj?
    :fnmethod :make-fnmethod :fnmethod? :get-impl :set-impl :fnmethod-params :impls :dispatch-params
-   :fnmethod-dispatch-params :fnmethod-impls :fnmethod-default-impl :default-impl
+   :fnmethod-dispatch-params :fnmethod-impls :fnmethod-default-impl :default-impl :fnmethod-name
    ;; pretty printing
    :show))
 
@@ -419,6 +419,7 @@
   (contents nil :type hash-table :read-only t))
 
 (defstruct (fnmethod (:predicate fnmethod?) :copier)
+  (name nil :read-only t)
   (params nil :type param-list :read-only t)
   (dispatch-params nil :type list :read-only t)
   (impls (make-hash-table :test 'equalp) :type hash-table :read-only t)

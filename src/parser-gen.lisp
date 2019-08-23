@@ -286,7 +286,7 @@ containing the size of the largest match and the callback for the corresponding 
                                 :from-end t)))
       (fn-error (slot-value (slot-value err-elt 'value)
                             'origin)
-                "parsing failed due to incomplete expression")))
+                "Parsing failed due to incomplete expression")))
   stack)
 
 (defmacro make-parser (input grammar &body callbacks)

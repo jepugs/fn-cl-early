@@ -225,7 +225,7 @@
 
       ;; for now, we'll forget about the fancy octal and hexadecimal escape codes
       (t (fn-error (scanner-origin ss)
-                   "unrecognized string escape code: \"\\~s\""
+                   "Unrecognized string escape code: \"\\~s\""
                    c)))))
 
 (defun scan-string-literal (ss)
@@ -237,7 +237,7 @@
       (cond
         ;; emit an error if the stream ends before the string is finished
         ((at-eof? ss) (fn-error (scanner-origin ss)
-                                "reached EOF while scanning string"))
+                                "Reached EOF while scanning string"))
 
         ;; when we're escaped, we dispatch to the scan-escape-code helper
         (escaped?
@@ -359,7 +359,7 @@
             (if (>= i (length ct))
                 (if escaped?
                     (fn-error (scanner-origin ss)
-                              "symbol name cannot end with \\")
+                              "Symbol name cannot end with \\")
                     (coerce (nreverse acc) 'string))
                 (let ((c (aref ct i)))
                   (cond

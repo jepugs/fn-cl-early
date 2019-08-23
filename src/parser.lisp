@@ -115,22 +115,22 @@
       (mismatch $(let ((op (car $))
                        (cl (car (last $))))
                    (fn-error (token-origin cl)
-                             "mismatched delimiter ~s (opening delimiter ~s at line ~a, col ~a)"
+                             "Mismatched delimiter ~s (opening delimiter ~s at line ~a, col ~a)"
                              (token-text cl)
                              (token-text op)
                              (origin-line (token-origin op))
                              (origin-column (token-origin (car $))))))
       (unclosed $(fn-error (slot-value (car (last $)) 'origin)
-                           "unclosed delimiter (opening delimiter ~s at line ~a, col ~a)"
+                           "Unclosed delimiter (opening delimiter ~s at line ~a, col ~a)"
                            (token-text (car $))
                            (origin-line (token-origin (car $)))
                            (origin-column (token-origin (car $)))))
       (illegal-dot $(fn-error (slot-value (cadr $) 'origin)
-                     "dot operator can only be used with symbols"))
+                     "Dot operator can only be used with symbols"))
       (dot-syntax $(fn-error (slot-value (cadr $) 'origin)
-                             "illegal dot syntax"))
+                             "Illegal dot syntax"))
       (missing-unary $(fn-error (slot-value (cadr $) 'origin)
-                                "missing operand for ~a"
+                                "Missing operand for ~a"
                                 (token-text (car $)))))))
 
 (defmacro make-fn-parser-state (str)

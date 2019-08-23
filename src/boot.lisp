@@ -30,19 +30,37 @@
      ,@body))
 
 (defmacro fn-defmethod (name dispatch-params params &body impls)
-  "Binds the local variable METHOD"
+  "Make an fn method definition. IMPLS is a list of implementation specifiers, consisting of a
+ parenthesized list of class symbols and a function body. The variable METHOD is bound to refer to
+ the created method and ARGS is the name of the function argument list. Default method may be
+ specified by providing () as arguments."
   (with-gensyms (dispatch-params-var params-var)
     `(let* ((,dispatch-params-var (list ,@dispatch-params))
             (,params-var ,params)
-            (method (make-fnmethod :params ,params-var
+            (method (make-fnmethod :name ,name
+                                   :params ,params-var
                                    :dispatch-params ,dispatch-params-var)))
-       (safe-add-global (fnintern ,name) method nil "bootstrap: ")
+       (safe-add-global (fnintern ,name) method nil "during bootstrapping: ")
        ,@(mapcar $(if (null (car $))
                       `(setf (slot-value method 'default-impl)
-                             (make-fnfun :body ,(cadr $)))
+                             (make-fnfun :body
+                                         (lambda (args)
+                                           ;; used to check parameters
+                                           (fn.eval::params-alist ,params-var
+                                                                  args
+                                                                  *current-env*
+                                                                  ,name)
+                                           ,@(cdr $))))
                       `(set-impl method
                                  (mapcar #'fn.eval::get-var (list ,@(car $)))
-                                 (make-fnfun :body ,(cadr $))))
+                                 (make-fnfun :body
+                                             (lambda (args)
+                                               ;; used to check parameters
+                                               (fn.eval::params-alist ,params-var
+                                                                      args
+                                                                      *current-env*
+                                                                      ,name)
+                                               ,@(cdr $)))))
                  impls))))
 
 (defun error-constructor (args)
@@ -61,10 +79,10 @@
   (case op
     ((>=)
      (when (length< args num)
-       (runtime-error "too few arguments for ~a" fun-name)))
+       (runtime-error "~a: Too few arguments" fun-name)))
     ((=)
-     (unless (funcall #'= (length args) num)
-       (runtime-error "wrong number of arguments for ~a" fun-name)))))
+     (unless (length= args num)
+       (runtime-error "~a: Wrong number of arguments" fun-name)))))
 
 (defmacro fn-defun (name (args-op args-num) &body body)
   `(safe-add-global (fnintern ,name)
@@ -90,95 +108,95 @@
 
     ;; sequence methods
     (fn-defmethod "head" (seq-sym) (make-param-list :pos `((,seq-sym)))
-      ((list-class-sym) $(if (eq (car $) empty)
-                             fnnull
-                             (caar $)))
-      ((string-class-sym) $(if (= (length (car $)) 0)
-                               fnnull
-                               (string (aref (car $) 0)))))
+      ((list-class-sym) (if (eq (car args) empty)
+                            fnnull
+                            (caar args)))
+      ((string-class-sym) (if (= (length (car args)) 0)
+                              fnnull
+                              (string (aref (car args) 0)))))
     (fn-defmethod "tail" (seq-sym) (make-param-list :pos `((,seq-sym)))
-      ((list-class-sym) $(if (eq (car $) empty)
-                             empty
-                             (cdar $)))
-      ((string-class-sym) $(if (= (length (car $)) 0)
-                               ""
-                               (subseq (car $) 1))))
+      ((list-class-sym) (if (eq (car args) empty)
+                            empty
+                            (cdar args)))
+      ((string-class-sym) (if (= (length (car args)) 0)
+                              ""
+                              (subseq (car args) 1))))
 
     (fn-defmethod "cons" (seq-sym) (make-param-list :pos `((,x-sym) (,seq-sym)))
-      ((list-class-sym) $(cons (car $) (cadr $)))
-      ((string-class-sym) $(if (and (string? (car $))
-                                    (= (length (car $)) 1))
-                               (concatenate 'string (car $) (cadr $))
+      ((list-class-sym) (cons (car args) (cadr args)))
+      ((string-class-sym) (if (and (string? (car args))
+                                    (= (length (car args)) 1))
+                               (concatenate 'string (car args) (cadr args))
                                (runtime-error
-                                "(cons String): first argument not a length-1 string"))))
+                                "cons: string-cons first argument not a length-1 string"))))
 
     (fn-defmethod "length" (seq-sym) (make-param-list :pos `((,seq-sym)))
-      ((list-class-sym) $(num (fnlist-length (car $))))
-      ((string-class-sym) $(num (length (car $)))))
+      ((list-class-sym) (num (fnlist-length (car args))))
+      ((string-class-sym) (num (length (car args)))))
     (fn-defmethod "empty?" (seq-sym) (make-param-list :pos `((,seq-sym)))
-      ((list-class-sym) $(bool (eq (car $) empty)))
-      ((string-class-sym) $(bool (eq (length (car $)) 0))))
+      ((list-class-sym) (bool (eq (car args) empty)))
+      ((string-class-sym) (bool (eq (length (car args)) 0))))
 
     (fn-defmethod "equal-method" (obj-sym) (make-param-list :pos `((,obj-sym) (,x-sym)))
-      (() $(equalp (car $) (cadr $))))
+      (() (equalp (car args) (cadr args))))
     (fn-defmethod "add-method" (left-sym right-sym)
         (make-param-list :pos `((,left-sym) (,right-sym))))
 
     ;; FIXME: make behavior of general object printing better (param backsubstitution?)
     (fn-defmethod "show" (obj-sym) (make-param-list :pos `((,obj-sym)))
-      ((bool-class-sym) $(show (car $)))
-      ((class-class-sym) $(show (car $)))
-      ((function-class-sym) $(show (car $)))
+      ((bool-class-sym) (show (car args)))
+      ((class-class-sym) (show (car args)))
+      ((function-class-sym) (show (car args)))
       ((list-class-sym)
-       $(let ((*print-pprint-dispatch* (copy-pprint-dispatch)))
+       (let ((*print-pprint-dispatch* (copy-pprint-dispatch)))
              (set-pprint-dispatch 'string #'format)
              (format nil
                      "[~/pprint-fill/]"
                      (fnmapcar (lambda (x)
                                  (fn.eval::call-fnmethod method (list x)))
-                               (car $)))))
-      ((module-class-sym) $(show (car $)))
-      ((method-class-sym) $(show (car $)))
-      ((null-class-sym) $(show (car $)))
-      ((num-class-sym) $(show (car $)))
-      ((string-class-sym) $(show (car $)))
+                               (car args)))))
+      ((module-class-sym) (show (car args)))
+      ((method-class-sym) (show (car args)))
+      ((null-class-sym) (show (car args)))
+      ((num-class-sym) (show (car args)))
+      ((string-class-sym) (show (car args)))
       ;; default object printer
-      (() $(let ((*print-pprint-dispatch* (copy-pprint-dispatch)))
+      (() (let ((*print-pprint-dispatch* (copy-pprint-dispatch)))
              (set-pprint-dispatch 'string #'format)
              (format nil
                      "(~a ~/pprint-fill/)"
-                     (sym-name (fnclass-name (fnobj-class (car $))))
-                     (->> (car $)
+                     (sym-name (fnclass-name (fnobj-class (car args))))
+                     (->> (car args)
                        (fnobj-contents)
                        (ht->plist)
                        (group 2)
                        (reverse)
-                       (mapcar (lambda (x)
-                                 (fn.eval::call-fnmethod method
-                                                         (list (cell-value (cadr x)))))))))))
+                       (mapcar $(fn.eval::call-fnmethod
+                                 method
+                                 (list (cell-value (cadr $))))))))))
 
     (fn-defun "gensym" (= 0)
       (fngensym))
 
     (fn-defun "+" (>= 1)
       (unless (every #'num? args)
-        (runtime-error "Arguments to + must be numbers"))
+        (runtime-error "+: Arguments must be numbers"))
       (num (apply #'+ args)))
     (fn-defun "-" (>= 1)
       (unless (every #'num? args)
-        (runtime-error "Arguments to - must be numbers"))
+        (runtime-error "-: Arguments must be numbers"))
       (num (apply #'- args)))
     (fn-defun "/" (>= 1)
       (unless (every #'num? args)
-        (runtime-error "Arguments to / must be numbers"))
+        (runtime-error "/: Arguments must be numbers"))
       (num (apply #'/ args)))
     (fn-defun "*" (>= 1)
       (unless (every #'num? args)
-        (runtime-error "Arguments to * must be numbers"))
+        (runtime-error "*: Arguments must be numbers"))
       (num (apply #'* args)))
     (fn-defun "pow" (>= 1)
       (unless (every #'num? args)
-        (runtime-error "Arguments to pow must be numbers"))
+        (runtime-error "pow: Arguments must be numbers"))
       (num (expt (car args) (cadr args))))
 
     (fn-defun ">" (>= 2)
@@ -204,12 +222,12 @@
       fnnull)
     (fn-defun "load" (= 1)
       (unless (string? (car args))
-        (runtime-error "load: argument must be a string"))
+        (runtime-error "load: Argument must be a string"))
       (with-open-file (in (car args) :direction :input)
         (let ((ast (fn.parser:parse (fn.scanner:scan in (car args)))))
           (mapc $(handler-case (eval-ast $)
                    (fn-error (x)
-                     (format t "Error encountered during load: ~a~%" x)))
+                     (format t "load: Error encountered: ~a~%" x)))
                 ast)))
       fnnull)
     (fn-defun "runtime-error" (= 1)

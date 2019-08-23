@@ -18,9 +18,9 @@
 (defpackage :fn.eval
   (:documentation "expression evaluator")
   (:use :cl :fn.util :fn.ast :fn.values :fn.code)
-  (:export :eval-ast :eval-code :fnintern :fngensym :safe-add-global :*current-env* :*interpreter*
-           :*interpreter-initialization-hook* :init-env :init-interpreter :runtime-error
-           :runtime-warning))
+  (:export :eval-ast :eval-code :eval-file :fnintern :fngensym :safe-add-global :*current-env*
+           :*interpreter* :*interpreter-initialization-hook* :init-env :init-interpreter
+           :runtime-error :runtime-warning))
 
 (in-package :fn.eval)
 
@@ -138,23 +138,14 @@
        (cell-value it)
        (runtime-error "Undefined variable ~s" (sym-name name))))
 
-(defun search-for-module (str)
-  (runtime-error "Could not find module ~a" str))
-
-(defun find-module (sym)
-  (aif (find-module-by-name sym)
-       (cdr it)
-       (search-for-module (sym-name sym))))
-
-
 (defun set-var (name value)
   (let ((cell (get-cell *current-env* name)))
     (cond
       ((null cell)
-       (runtime-error "Undefined variable ~s" (sym-name name)))
+       (runtime-error "set: Undefined variable ~s" (sym-name name)))
 
       ((not (cell-mutable cell))
-       (runtime-error "Attempt to set immutable variable ~s"
+       (runtime-error "set: Attempt to set immutable variable ~s"
                       (sym-name name)))
 
       (t (cell-mutable cell)
@@ -200,10 +191,13 @@
        (cell-value it)
        (runtime-error "Unbound symbol: ~a" (code-sym-name c))))
 
-(defun eval-body (body)
+(defun eval-body (body &optional fun-name)
   "Evaluate a list of code objects in order, returning the last expresison."
   (cond
-    ((null body) (runtime-error "No expressions in body"))
+    ((null body) (runtime-error "~aNo expressions in body"
+                                (if fun-name
+                                    (concatenate 'string fun-name ": ")
+                                    "")))
     ((length= body 1) (eval-code (car body)))
     (t (eval-code (car body))
        (eval-body (cdr body)))))
@@ -255,9 +249,9 @@
       ((eq op set-sym)
        (eval-set (car args) (cadr args)))
       ((eq op unquote-sym)
-       (runtime-error "unquote outside of quasiquote"))
+       (runtime-error "unquote: unquote outside of quasiquote"))
       ((eq op unquote-splice-sym)
-       (runtime-error "unquote-splice outside of quasiquote"))
+       (runtime-error "unquote-splice: unquote-splice outside of quasiquote"))
       ((code-dotted-get? (code-car c))
        (eval-get-op-list c))
       ((not (sym? op)) (eval-funcall c))
@@ -295,71 +289,77 @@
            (eval-code code))
          (eval-funcall c))))
 
-(defun params-alist (param-list args outer-env)
-  "Get an ALIST from parameter symbols to argument values."
+(defun params-alist (param-list args outer-env &optional op-name)
+  "Create an ALIST matching parameter symbols to argument values. This function generates runtime
+ errors if the provided argument list doesn't match the parameter list. As such it may be used for
+ error checking."
   (with-slots (pos keyword vari) param-list
-    (labels ((get-optional (p)
-               (if (cdr p)
-                   (eval-code (cdr p) outer-env)
-                   (runtime-error "Missing required argument for parameter list")))
-             (bind-positional (acc params args)
-               (cond
-                 ((null params)
-                  (if keyword
-                      (append acc (bind-keyword nil nil args))
-                      (append (bind-vari args) acc)))
-                 ((null args)
-                  (bind-positional (cons (cons (caar params)
-                                               (get-optional (car params)))
-                                         acc)
-                                   (cdr params)
-                                   nil))
-                 (t (bind-positional (cons (cons (caar params)
-                                                 (car args))
+    (let ((err-pre (if op-name
+                       (concatenate 'string op-name ": ")
+                       "")))
+      (labels ((get-optional (p)
+                 (if (cdr p)
+                     (eval-code (cdr p) outer-env)
+                     (runtime-error "~aToo few arguments" err-pre)))
+               (bind-positional (acc params args)
+                 (cond
+                   ((null params)
+                    (if keyword
+                        (append acc (bind-keyword nil nil args))
+                        (append (bind-vari args) acc)))
+                   ((null args)
+                    (bind-positional (cons (cons (caar params)
+                                                 (get-optional (car params)))
                                            acc)
                                      (cdr params)
-                                     (cdr args)))))
-             ;; vari-acc tracks variadic keyword args where applicable
-             (bind-keyword (acc vari-acc args)
-               (if args
-                   (let* ((k (car args))
-                          (v (cadr args)))
-                     (unless (sym? k)
-                       (runtime-error "Keyword is not a symbol"))
-                     (when (null v)
-                       (runtime-error "Odd number of keyword arguments"))
-                     (if (assoc k keyword :test #'equal)
-                         (bind-keyword (cons (cons k v) acc)
-                                       vari-acc
-                                       (cddr args))
-                         (if vari
-                             ;; vari-acc is built backwards
-                             (bind-keyword acc
-                                           (cons v (cons k vari-acc))
-                                           (cddr args))
-                             (runtime-error "Unknown keyword ~s"
-                                            (sym-name k)))))
-                   ;; make sure all required keywords are bound
-                   (let ((res
-                          (mapcar $(or (assoc (car $) acc :test #'equal)
-                                       (cons (car $) (get-optional $)))
-                                  keyword)))
-                     (if vari
-                         (cons (cons vari (apply #'fnlist (nreverse vari-acc)))
-                               res)
-                         res))))
-             (bind-vari (args)
-               (if vari
-                   (list (cons vari (apply #'fnlist args)))
-                   (if args
-                       (runtime-error "Too many arguments")
-                       nil))))
-      (bind-positional nil pos args))))
+                                     nil))
+                   (t (bind-positional (cons (cons (caar params)
+                                                   (car args))
+                                             acc)
+                                       (cdr params)
+                                       (cdr args)))))
+               ;; vari-acc tracks variadic keyword args where applicable
+               (bind-keyword (acc vari-acc args)
+                 (if args
+                     (let* ((k (car args))
+                            (v (cadr args)))
+                       (unless (sym? k)
+                         (runtime-error "~aMalformed keyword argument" err-pre))
+                       (when (null v)
+                         (runtime-error "~aOdd number of keyword arguments" err-pre))
+                       (if (assoc k keyword :test #'equal)
+                           (bind-keyword (cons (cons k v) acc)
+                                         vari-acc
+                                         (cddr args))
+                           (if vari
+                               ;; vari-acc is built backwards
+                               (bind-keyword acc
+                                             (cons v (cons k vari-acc))
+                                             (cddr args))
+                               (runtime-error "~aUnrecognized keyword argument ~s"
+                                              err-pre
+                                              (sym-name k)))))
+                     ;; make sure all required keywords are bound
+                     (let ((res
+                            (mapcar $(or (assoc (car $) acc :test #'equal)
+                                         (cons (car $) (get-optional $)))
+                                    keyword)))
+                       (if vari
+                           (cons (cons vari (apply #'fnlist (nreverse vari-acc)))
+                                 res)
+                           res))))
+               (bind-vari (args)
+                 (if vari
+                     (list (cons vari (apply #'fnlist args)))
+                     (if args
+                         (runtime-error "~aToo many arguments" err-pre)
+                         nil))))
+        (bind-positional nil pos args)))))
 
-(defun bind-params (param-list args outer-env)
+(defun bind-params (param-list args outer-env &optional op-name)
   "Extend OUTER-ENV with variable bindings created by PARAM-LIST and ARGS."
   (let* ((binding-alist (remove-if $(eq (car $) wildcard-sym)
-                                   (params-alist param-list args outer-env)))
+                                   (params-alist param-list args outer-env op-name)))
          (*current-env* (init-env (mapcar #'car binding-alist) outer-env)))
     (mapc $(set-var (car $) (cdr $)) binding-alist)
     *current-env*))
@@ -382,15 +382,18 @@
           (eval-body body)))))
 
 (defun call-fnmethod (m args)
-  (with-slots (params dispatch-params default-impl) m
-    (let* ((new-env (bind-params params args *current-env*))
+  (with-slots (name params dispatch-params default-impl) m
+    (let* ((new-env (bind-params params args *current-env* name))
            (types (mapcar $(get-class-of (cell-value (get-cell new-env $)))
                           dispatch-params)))
       (aif (get-impl m types)
            (call-fun it args)
            (if default-impl
                (call-fun default-impl args)
-               (runtime-error "Method not implemented on types (~{~a~^ ~})."
+               (runtime-error "~aMethod not implemented on types (~{~a~^ ~})."
+                              (if name
+                                  (concatenate 'string name ": ")
+                                  "")
                               (mapcar $(show (fnclass-name $)) types)))))))
 
 (defun call-obj (op args)
@@ -416,7 +419,7 @@
   (let ((op (eval-code (car arg-exprs)))
         (args (mapcar $(eval-code $) (cdr arg-exprs))))
     (unless (fnlist? (car (last args)))
-      (runtime-error "apply: last argument must be a list"))
+      (runtime-error "apply: Last argument must be a list"))
     (let ((arg-list (reduce #'cons args :from-end t)))
       (rplacd (last arg-list) nil)
       (call-obj op arg-list))))
@@ -424,7 +427,7 @@
 ;;; class-of
 (defun eval-class-of (arg-code)
   (or (get-class-of (eval-code arg-code))
-      (runtime-error "object has unknown class")))
+      (runtime-error "class-of: Object has unknown class")))
 
 (defun get-class-of (v)
   (cond ((or (true? v) (false? v)) (class-by-name (fnintern "Bool")))
@@ -532,7 +535,8 @@
 ;;; defmethod
 (defun eval-defmethod (name dispatch-params params)
   "Create a new method."
-  (let ((m (make-fnmethod :params (code->param-list params)
+  (let ((m (make-fnmethod :name (sym-name name)
+                          :params (code->param-list params)
                           :dispatch-params (mapcar #'code-data dispatch-params))))
     (safe-add-global name m nil "defmethod")
     m))
@@ -680,13 +684,13 @@
 
 (defun fnstring-get (obj key)
   (unless (num? key)
-    (fn-error "string index is not a number: ~a" (show key)))
+    (runtime-error "get: String index is not a number: ~a" (show key)))
   (unless (num-int? key)
-    (fn-error "string index is not an integer: ~a" (show key)))
+    (runtime-error "get: String index is not an integer: ~a" (show key)))
   (unless (>= 0 key)
-    (fn-error "string index is negative: ~a" (show key)))
+    (runtime-error "get: String index is negative: ~a" (show key)))
   (if (> key (length obj))
-      (fn-error "string index out of bounds: ~a" (show key))
+      (runtime-error "get: String index out of bounds: ~a" (show key))
       (aref obj (truncate key))))
 
 (defun get-field (obj field)
@@ -695,31 +699,31 @@
     ((fnmodule? obj) (fnmodule-get-field obj field))
     ;; TODO: add check for get-method implementations
     ((fnobj? obj) (fnobj-get-field obj field))
-    (t (runtime-error "Object ~a has no gettable fields or indices" (show obj)))))
+    (t (runtime-error "get: Object has no gettable fields or indices"))))
 
 (defun fnclass-get-field (obj key)
   (cond
     ((eq key name-sym) (fnclass-name obj))
     ((eq key fields-sym) (apply #'fnlist (fnclass-fields obj)))
     ((eq key constructor-sym) (fnclass-constructor obj))
-    (t (runtime-error "get-field: object has no field named ~a" (show key)))))
+    (t (runtime-error "get: Object has no field named ~a" (show key)))))
 
 (defun fnmodule-get-field (obj key)
   (cond
     ((eq key name-sym) (fnmodule-name obj))
     ((eq key vars-sym) (fnmodule-vars obj))
     ((eq key macros-sym) (fnmodule-macros obj))
-    (t (runtime-error "get-field: object has no field named ~a" (show key)))))
+    (t (runtime-error "get: Object has no field named ~a" (show key)))))
 
 (defun fnobj-get-field-cell (obj key)
   (gethash (sym-id key) (fnobj-contents obj)))
 
 (defun fnobj-get-field (obj key)
   (unless (sym? key)
-    (runtime-error "get-field: field name not a symbol: ~a" (show key)))
+    (runtime-error "get: Field name not a symbol: ~a" (show key)))
   (aif (fnobj-get-field-cell obj key)
        (cell-value it)
-       (runtime-error "get-field: object has no field named ~a" (show key))))
+       (runtime-error "get: Object has no field named ~a" (show key))))
 
 ;;; if
 (defun eval-if (test then else)
@@ -741,18 +745,18 @@
          ;; decide what to do.
          (when (and (fnmodule? (cell-value it))
                     (eq (fnmodule-name (cell-value it)) sym))
-           (runtime-warning "import: reloading module ~s" (sym-name sym))
+           (runtime-warning "import: Reloading module ~s" (sym-name sym))
            ;; FIXME: deleting the value cell probably will cause optimization bugs
            (add-global-cell *current-env* new-name nil))
          nil)
     (let ((mod (init-import-module sym (find-module-by-name (fnintern "__built-in")))))
       ;; load the module code
       (unless mod
-        (runtime-error "import: couldn't find module by name ~s" (sym-name sym)))
+        (runtime-error "import: Couldn't find module by name ~s" (sym-name sym)))
       (handler-case (let ((*current-env* (init-env nil nil mod)))
                       (eval-file (fnmodule-loaded-from mod)))
         (fn-error (x)
-          (runtime-error "error importing ~s:~%~a"
+          (runtime-error "import: Error importing ~s:~%~a"
                          (sym-name sym)
                          x)))
       ;; set the variable and add to the modules list
@@ -830,7 +834,7 @@
                     ((and (eq op unquote-splice-sym)
                           (length= (code-data c) 2))
                      (if (= level 1)
-                         (runtime-error "illegal unquote-splice in quasiquote")
+                         (runtime-error "quasiquote: Illegal unquote-splice")
                          (qqlist (code-data c) (- level 1))))
 
                     ;; nested lists
@@ -857,7 +861,7 @@
        (set-key root-obj
                 (mapcar #'eval-code keys)
                 (eval-code value-code))))
-    (t (runtime-error "set: unrecognized set place"))))
+    (t (runtime-error "set: Unrecognized set place"))))
 
 (defun set-field (obj0 fields value)
   (cond
@@ -871,17 +875,17 @@
        (aif (fnobj-get-field-cell obj1 f)
             (if (cell-mutable it)
                 (setf (cell-value it) value)
-                (runtime-error "set: object ~s field ~s is immutable"
+                (runtime-error "set: Object ~s field ~s is immutable"
                                (show obj1)
                                (show f)))
-            (runtime-error "set: object ~s has no such field: ~s"
+            (runtime-error "set: Object ~s has no such field: ~s"
                                (show obj1)
                                (show f)))))
-    (t (runtime-error "set: object ~s has no settable fields"
+    (t (runtime-error "set: Object ~s has no settable fields"
                       (show obj0)))))
 
 (defun set-key (obj0 keys value)
   (cond
     ((fnobj? obj0) (set-field obj0 keys value))
-    (t (runtime-error "set: object ~s has no settable fields"
+    (t (runtime-error "set: Object ~s has no settable fields"
                       (show obj0)))))
