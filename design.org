@@ -660,7 +660,7 @@ inner function.
 ~fn~ creates an anonymous function which accepts the provided parameters and executes the code in
 <body*>.
 
-*** TODO ~get~
+*** DONE ~get~
 
 #+BEGIN_SRC fn
 ;;; syntax - get
@@ -681,14 +681,6 @@ provided, then ~get~ is applied recursively using each key in order.
 Default behavior for ~get~ depends on the type of the object:
 
 #+BEGIN_SRC fn
-;;; lists
-;; get a numerical index (starting from 0)
-(get [1 2 3] 0) ;=> 1
-(get [1 2 3] 2) ;=> 3
-;; can also get the head and tail of the list
-(get [1 2 3] 'hd) ;=> 1
-(get [1 2 3] 'tl) ;=> [2 3]
-
 ;;; strings
 ;; get a numerical index
 (get "test" 1) ;=> "e"
@@ -696,26 +688,12 @@ Default behavior for ~get~ depends on the type of the object:
 ;;; modules
 ;; gets variables from the module
 (get <module> <var>) ;; value of a variable in a module
+
+;;; In the future, vectors will be accessible by number and tables by arbitrary keys
 #+END_SRC
 
-On general objects, the default behavior of ~get~ is to call ~get-field~, but this can be customized
-by defining the built-in method ~get-method~ on the class of the object.
-
-*Impl. Status:* works but doesn't check for ~get-method~ implementations
-
-*** DONE ~get-field~
-
-#+BEGIN_SRC fn
-;;; syntax - get-field
-(get-field <obj> <fields*>)
-;;; where
-;; <fields*> are expressions yielding fields to access
-#+END_SRC
-
-~get-field~ is used to directly access the fields of an object. If multiple fields are provided, then
-~get-field~ is applied recursively for each key. Unlike ~get~, ~get-field~ always has the same behavior
-regardless of the type of object. Most built-in types have no gettable fields and will cause an
-error if they are passed as an object to ~get-field~.
+However, for the majority of objects, including all instances user-defined classes, get simply
+accesses the fields of thei object by their names.
 
 *** DONE ~if~
 
@@ -735,16 +713,41 @@ its value. Otherwise, it evaluates <else> and returns that value.
 #+BEGIN_SRC fn
 ;;; syntax - import
 (import <module>)
-(import <module> 'as <var>)
+(import <module> 'as <name>)
 ;;; where
 ;; <module> is a module designator
-;; <var> is a symbol
+;; <name> is a symbol
 #+END_SRC
 
-~import~ imports an external module as a global variable.
+~import~ imports an external module as a global variable. The name of the created variable can be
+provided via the 'as keyword parameter. It is <module> by default. Module import behavior differs in
+interactive and non-interactive evaluation.
 
-*Impl status:* import is not implemented at all because I'm still figuring out how module search paths
-will work.
+Importing a module non-interactively:
+
+1. searches for <module> in the list of previously-imported modules
+2. if <module> was loaded previously, reuse the existing module object.
+3. otherwise, look in the search path for the file <module>.fn. 
+4. If a file is found, initialize a new module object by evaluating it. Otherwise, emit an error.
+
+In interactive mode, when a module is imported a second time, the timestamp of its source file is
+checked. If the file has been modified since the last import, the module is reloaded.
+
+The search path is ~./:/usr/local/lib/fn/modules/:/usr/lib/fn/modules/~. Paths are relative to the
+directory of the file being evaluated.
+
+*Impl. Status:* Import works, but currently overwrites existing module definitions regardless of mode.
+Module names may not include slashes.
+
+**** Future extension: filename imports
+
+There need to be other ways to import modules. Perhaps strings could be used to indicate filenames: 
+
+#+BEGIN_SRC fn
+(import "../core/src.fn") ; automatically names the module src
+src ;=><MODULE:src.fn>
+(import "../core/src.fn" 'as local-mod)
+#+END_SRC
 
 *** DONE ~let~
 
@@ -823,20 +826,18 @@ expressions are quoted like normal lists.
 
 ~quote~ causes an expression's code to be returned as an fn value. This process is called *quoting*.
 
-*** TODO ~set~
+*** DONE ~set~
 
 #+BEGIN_SRC fn
 ;;; syntax - quote
 (set <var> <value>)
-(set (get-field <obj> <fields*>) <value>)
 (set (get <obj> <keys*>) <value>)
 #+END_SRC
 
-~set~ is used to set variables and to modify objects. When ~(set (get-field))~ is used, the respective
-field is modified. When ~(set (get))~ is used, the appropriate implementation of ~set-method~ is used.
-Note that ~set-method~'s default behavior is to do ~(set (get-field))~.
-
-*Impl. status:* implemented, but doesn't use ~set-method~.
+~set~ is used to set variables and to mutate objects. When ~(set (get obj field))~ is used, the value of
+field in object is mutated. Note that fields in user-defined classes are immutable by default, and
+that all built-in classes are also immutable. (Note: tables and byte arrays will have mutable
+fields).
 
 *** DONE ~unquote~
 
@@ -866,8 +867,58 @@ spliced into the list.
 When ~unquote-splice~ appears outside of a quasiquoted list, an error is generated.
 
 
-** Built-in values
+** TODO Math functions
 
+- +, -, /, *
+- mod
+- pow
+- sqrt
+- log
+- floor
+- ceil
+- int-part
+- frac-part
+- int?
+- even?
+- odd?
+- exp
+- sin, cos, tan
+- asin, acos, atan
+- sinh, cosh, tanh
+- asinh, acosh, atanh
+
+** TODO Sequence functions
+
+- head
+- tail
+- cons
+- contains?
+- nth
+- take
+- drop
+- take-while
+- drop-while
+- map
+- filter
+- zip
+- group
+- group-by
+- interleave
+- reverse
+- foldl
+- foldr
+- dedupe
+
+*sequence creation*
+- cycle
+- repeat
+- range
+
+** TODO ~print~ and ~println~ (functions)
+
+** TODO ~show~ (method)
+
+** Built-in values
 *** Classes
 
 *** Functions
@@ -881,6 +932,26 @@ When ~unquote-splice~ appears outside of a quasiquoted list, an error is generat
 
 This section is a bunch of garbage to help me remember things. I don't recommend trying to read
 this.
+
+** Compilation of method dispatch
+
+To call a method:
+- (?) check the arity of the method call
+- evaluate the function arguments
+- load a pointer to the dispatch function (from the method object)
+- call the dispatch function with the provided arguments
+- the dispatch function has been compiled to do this:
+  - get the class of dispatch arguments with hard-coded indices
+  - the next part must be recompiled every time a new implementation is added
+  - there's a hard-coded dispatch hash table. The hash table uses an open addressing scheme. Every
+    time a method is added, the table needs to be recompiled, but that's ok, because it should be
+    rare to add another method at runtime anyway. Each bucket in the hash table corresponds to a
+    location in the code, represented as an offset from some base pointer. At each location, the key
+    is hardcoded in in the form of an equality test that jumps to probing if the keys are not equal.
+    Linear probing is used to handle collisions. We could probably rebuild the table whenever the
+    probe number exceeds a certain value. The idea here is that most methods will only have a few
+    implementations.
+
 
 ** Proposal: implementing module (w/ reloading)
 

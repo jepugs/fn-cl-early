@@ -59,7 +59,7 @@
    :fnmethod :make-fnmethod :fnmethod? :get-impl :set-impl :fnmethod-params :impls :dispatch-params
    :fnmethod-dispatch-params :fnmethod-impls :fnmethod-default-impl :default-impl
    ;; pretty printing
-   :show :fnprint :fnprintln))
+   :show))
 
 (in-package :fn.values)
 
@@ -469,9 +469,3 @@
                (reverse)
                (mapcar $(show (cell-value (cadr $)))))))
     (t "#<UNRECOGNIZED-FOREIGN-OBJECT>")))
-
-(defun fnprint (x &optional (stream *standard-output*))
-  (princ (show x) stream))
-(defun fnprintln (x &optional (stream *standard-output*))
-  (fnprint x stream)
-  (terpri stream))

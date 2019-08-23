@@ -11,7 +11,7 @@
 (defvar fn-definers
   '("def" "defclass" "defmacro" "defmethod" "defvar" "defvar*"))
 (defvar fn-special-operators
-  '("apply" "case" "cond" "do" "if" "fn" "let" "get" "get-field" "set"
+  '("apply" "case" "class-of" "cond" "do" "if" "import" "fn" "let" "get" "set"
     "quote" "quasiquote" "unquote" "unquote-splice" "dollar-fn")
   "Special operators that have their names highlighted")
 (defvar fn-constants

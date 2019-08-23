@@ -24,6 +24,14 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+(defun fnshow (obj)
+  (fn.eval::call-fnmethod (fn.eval::get-var (fnintern "show"))
+                          (list obj)))
+
+(defun fnprintln (obj)
+  (princ (fnshow obj))
+  (terpri))
+
 (defun main ()
   (let ((args sb-ext:*posix-argv*))
     ;; check arguments

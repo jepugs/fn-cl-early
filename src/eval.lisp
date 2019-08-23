@@ -659,7 +659,6 @@
 
 (defun get-key (obj key)
   (cond
-    ((fnlist? obj) (fnlist-get obj key))
     ((fnclass? obj) (fnclass-get-field obj key))
     ((fnmodule? obj) (fnmodule-get obj key))
     ((string? obj) (fnstring-get obj key))
@@ -678,30 +677,6 @@
        (runtime-error "get: Module ~s contains no variable named ~s"
                       (show (fnmodule-name obj))
                       (show key))))
-
-;; TODO: add support for negative indices
-(defun fnlist-get (obj key)
-  (cond
-    ((num? key)
-     (unless (num-int? key)
-       (runtime-error "list index is not an integer: ~a" (show key)))
-     (unless (>= key 0)
-       (runtime-error "list index is negative: ~a" (show key)))
-     (rlambda (pos lst) ((truncate key) obj)
-       (if (empty? lst)
-           (runtime-error "list index out of bounds: ~a" (show key))
-           (if (zerop pos)
-               (car lst)
-               (recur (- pos 1) (cdr lst))))))
-    ((eq key hd-sym)
-     (if (empty? obj)
-         (runtime-error "empty list has no hd")
-         (car obj)))
-    ((eq key tl-sym)
-     (if (empty? obj)
-         (runtime-error "empty list has no tl")
-         (cdr obj)))
-    (t (fn-error "list has no field named ~a" (show key)))))
 
 (defun fnstring-get (obj key)
   (unless (num? key)
