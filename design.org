@@ -380,10 +380,46 @@ The following classes are built into fn.
 (Hash-)tables, arrays, foreign data structures and byte arrays are planned for the future.
 
 
+* Error reporting
+
+One of the priorities in implementing fn is high quality error reporting. Every error should include
+a location in the fn source code, the name of the offending operator, and a short description of
+what went wrong.
+
+The phases in which errors can be generated are
+- scanning
+- parsing
+- code validation
+- runtime
+
+All errors begin with a line providing the name of the Common Lisp package where the error was
+detected and the fn source code location. The next line contains a message describing the error
+indented four spaces. Example:
+
+#+BEGIN_SRC
+> (]
+FN.PARSER error at line 1, col 2:
+    Mismatched delimiter "]" (opening delimiter "(" at line 1, col 1)
+#+END_SRC
+
+Runtime error messages begin with the string "Runtime error: ". When the name of an operator is
+available, that comes next, followed by another colon. Then the error is described. Messages may be
+multiple lines long. Generally, messages should start with capital letters, but names of symbols
+should never be capitalized differently from how they appear in the code. Example:
+
+#+BEGIN_SRC
+> (+)
+FN.EVAL error at line 1, col 3:
+    Runtime error: +: Too few arguments
+#+END_SRC
+
+Naturally, the next step will be printing a stack trace.
+
+
 * Comprehensive language description
 
 This section completely (and formal-ish-ly) describes fn as it is now. It is a work in progress, but
-it's completion is a priority.
+its completion is a priority.
 
 ** Notation
 
@@ -398,16 +434,7 @@ In addition, some names have more specific meanings:
 - <obj> :: is an expression yielding an arbitrary object
 - <params*> :: an fn parameter list like those used in function creation
 
-
 ** Syntax
-*** Literals
-
-*** Symbols
-
-*** Lists
-
-*** Other syntax
-
 *** BNF
 
 Below is the BNF used to parse the language. It is presented as the same LR(1) grammar used by the
@@ -446,7 +473,6 @@ interpreter.
 #+END_SRC
 
 Where <symbol> is a symbol, <number> is a number, and <string> is a string literal.
-
 
 ** Special operators
 
@@ -749,6 +775,23 @@ src ;=><MODULE:src.fn>
 (import "../core/src.fn" 'as local-mod)
 #+END_SRC
 
+*** TODO ~import-from~
+
+#+BEGIN_SRC fn
+;;; syntax - import
+(import-from <module> (<vars*>))
+(import-from <module>)
+;;; where
+;; <module> is a module designator
+;; <vars*> is a sequence of symbols
+#+END_SRC
+
+~import-from~ performs an unqualified import of all the symbols in <vars*> from the module <module>.
+When the one-argument form is used, all symbols are imported. This feature is intended mainly for
+interactive sessions and should be used sparingly outside that context.
+
+*Impl. Status:* Not implemented
+
 *** DONE ~let~
 
 #+BEGIN_SRC fn
@@ -866,8 +909,25 @@ spliced into the list.
 
 When ~unquote-splice~ appears outside of a quasiquoted list, an error is generated.
 
+** TODO Object manipulation
 
-** TODO Math functions
+- =
+- copy
+
+** TODO Control flow
+
+- (for seq & body)
+- (loop parameters init-args & body)
+- ->, ->>, ->as
+- comp
+
+** TODO Macro Writing/Code Manipulation
+
+- module code
+- gensym
+- walk-code
+
+** TODO Math
 
 - +, -, /, *
 - mod
@@ -887,78 +947,73 @@ When ~unquote-splice~ appears outside of a quasiquoted list, an error is generat
 - sinh, cosh, tanh
 - asinh, acosh, atanh
 
-** TODO Sequence functions
+** TODO Sequences
 
-- head
-- tail
-- cons
-- contains?
-- nth
-- take
-- drop
-- take-while
-- drop-while
-- map
-- filter
-- zip
-- group
-- group-by
-- interleave
-- reverse
-- foldl
-- foldr
-- dedupe
+Many sequence functions have two versions, e.g. map and map0. The difference is that the version
+without the zero returns a lazy list, while the other returns a regular list.
+
+Sequence functions take a sequence object as their last argument.
+
+- (head seq)
+- (tail seq)
+- (empty? seq)
+- (cons item seq)
+- (contains? item seq)
+- (nth n seq)
+- (find fun seq)
+- (take n seq), take0
+- (drop n seq), drop0
+- (take-while fun seq), take-while0
+- (drop-while fun seq), drop-while0
+- (map fun seq), map0
+- (filter fun seq), filter0
+- (zip & seqs), zip0
+- (group n seqs), group0
+- (group-by fun seqs), group-by0
+- (interleave fun seqs), interleave0
+- (reverse seq)
+- (foldl fun init seq)
+- (foldr fun init seq)
+- (dedupe seq), dedupe0
 
 *sequence creation*
-- cycle
-- repeat
-- range
+- (cat & seqs), cat0
+- (cycle & items)
+- (repeat seq)
+- (range a b (step 1)), range0
 
-** TODO ~print~ and ~println~ (functions)
+** TODO Files and Streams
 
-** TODO ~show~ (method)
+This should encompass all basic POSIX file functionality.
 
-** Built-in values
-*** Classes
+- io module
+- File class
+- print
+- println
 
-*** Functions
+** TODO Strings
 
-*** Methods
+*built-in*
+- String
+- show
+- char-digit?
+- char-ascii?
+- char->int
+- int->char
 
-*** Macros
+*str module*
+- split, split0
+- words, words0
+- lines, lines0
+- subst
+- upcase
+- downcase
 
 
 * Misc Notes and Ideas
 
-This section is a bunch of garbage to help me remember things. I don't recommend trying to read
-this.
-
-** Compilation of method dispatch
-
-To call a method:
-- (?) check the arity of the method call
-- evaluate the function arguments
-- load a pointer to the dispatch function (from the method object)
-- call the dispatch function with the provided arguments
-- the dispatch function has been compiled to do this:
-  - get the class of dispatch arguments with hard-coded indices
-  - the next part must be recompiled every time a new implementation is added
-  - there's a hard-coded dispatch hash table. The hash table uses an open addressing scheme. Every
-    time a method is added, the table needs to be recompiled, but that's ok, because it should be
-    rare to add another method at runtime anyway. Each bucket in the hash table corresponds to a
-    location in the code, represented as an offset from some base pointer. At each location, the key
-    is hardcoded in in the form of an equality test that jumps to probing if the keys are not equal.
-    Linear probing is used to handle collisions. We could probably rebuild the table whenever the
-    probe number exceeds a certain value. The idea here is that most methods will only have a few
-    implementations.
-
-
-** Proposal: implementing module (w/ reloading)
-
-First change: add several functions for dealing with get expressions. Modules now know where they
-were defined. If a module is being reloaded, we allow it to be fully redefined with a new module
-object and all.
-
+This section is a bunch of garbage to help me remember things. (This is the clean garbage. The real
+garbage is in a local directory).
 
 ** Proposal: module names and paths
 
@@ -981,7 +1036,6 @@ If a symbol is used, then the module is equal to
 
 *Impl. note:* import-from should use the same value cells in the new bindings as in the original
 module. This causes changes from one variable to propagate to changes from another.
-
 
 ** Proposed pattern matching behavior
 
@@ -1014,7 +1068,6 @@ is this:
 #+END_SRC
 
 Unlike ~cond~, case will throw a runtime error if there are no matches.
-
 
 ** Proposed extension: ~let~ pattern destructuring
 
@@ -1049,355 +1102,3 @@ its arguments match and binds no variables.
 ~let~ will not accept any logical patterns, as their behaviors are outside the scope of local variable
 definition.
 
-
-** Possible Alteration to Class/Object Structure
-
-Ok so hear me out.
-
-We have tables and structures (classes). Structures basically are tables but all the keys are
-symbols. The problem is dot syntax. Right now it calls ~(get obj 'key)~ but we'd rather that it called
-~(get-field obj 'key)~. Problems with this is that dot syntax is used to descend into module objects
-so we need to differentiate somehow.
-
-The current solution is this: provide a method, get-method, and use it to handle calls to get.
-Problem with this is that it makes every access operation have to do virtual dispatch. Yuck.
-
-Virtual dispatch works like this, by the way:
-- get the class of each dispatch arg
-- hash the list of classes to find the appropriate implementation function
-- call the function
-
-
-Potential Solutions:
-
-- change the behavior of get so that it doesn't invoke get-method
-  - in this case, there's no way to get the meta data of a module without (a) introducing special
-    module variables like ~__name__~ and ~__fields__~ (Python style) or (b) providing a different
-    special form/object type like ~(module-data <module>)~.
-  - this would make Tables and Modules into the only special classes that have different behavior
-  - alternatively, could turn all objects into generalized kv stores and encode ~__class__~ as a field
-    in each object. This would beg for a reimagining of what a class is and would probably be hard.
-- change the behavior of dot so that it has a different expansion (e.g. dotted-get)
-
-
-** Standard library
-
-If you think about it, lazy lists and iterators are almost the same thing. They both compute the
-next value in a sequence. The main difference is that lazy lists have their intermediate results
-saved. This allows the same lazy list object to be used in multiple places while guaranteeing that
-each element will be evaluated at most once, and that unused elements will be evaluated never.
-
-Both of these constructs have the advantage of allowing sequence operations to be composed in a very
-efficient manner.
-
-It is fairly easy to go from one representation to another. 
-
-
-#+BEGIN_SRC fn
-(defclass (Iterator head next))
-
-(def (iter->list iter)
-  (loop (acc i) ([] iter)
-    (if iter
-        (recur (cons i.head acc) (i.next))
-        (reverse acc))))
-
-(defclass (LCons hd tl))
-(defclass (Lazy-List thunk))
-
-(def ((head Lazy-List) seq)
-  (case (seq.thunk)
-    (LCons hd _) hd
-    _            null))
-(def ((rest Lazy-List) seq)
-  (case (seq.thunk)
-    (LCons _ tl) tl
-    _            seq))
-
-(def ((cons Lazy-List) hd tl)
-  (let (x (LCons hd tl))
-    (Lazy-List (fn () x))))
-
-
-
-;; take and drop preserve the type of their sequence
-
-;; filter and map return lazy lists
-(def (map fun & lsts)
-  (if (any empty? lsts)
-      (Lazy-List [])
-      (lcons (apply fun (map head lsts))
-             (Lazy-List $(apply map fun (map tail lsts))))))
-
-
-
-#+END_SRC
-
-Math module:
-
-- floor, ceil, round, frac (a.k.a fractional part)
-- sin, cos, tan, sinh, cosh, tanh, asin, acos, atan
-- exp, pow, log
-- +, -, *, /, mod
-- with-modulus (macro, locally rebinds +, -, *, and pow exprs to do modular arithmetic)
-
-
-Sequence library:
-
-- any, every
-- cons
-- (method) append
-- (method) get-iter
-- (class) Iter
-- (class) Lazy-List
-- map, foldl, foldr
-- (replace subseq new-place seq)
-- (split subseq seq)
-- take, drop, take-while, drop-while, split, split-at
-
-
-** Transducers vs Lazy Lists
-
-Transducers are functions that transform reduction functions. map and filter are examples of
-reduction functions. Because these examples produce lists as their output, they are composable as
-transducers. For instance, a filter transducer would take a reduction function and apply it /after/
-applying the filter to the input sequence. A map transducer applies the mapping function before
-calling the transducer it's applied to. And so on.
-
-Transducers and lazy lists both allow reduction functions to be composed before their results are
-computed.
-
-Pros of transducers over lazy lists:
-- transducers are just functions
-- no new sequence data structures are required
-- don't need to save a new cons cell for every computation
-- clojure does this
-- simpler implementation because no memoization is needed
-
-Pros of lazy lists over transducers:
-- transducers compose in backwards order
-- the usual reduction functions (map, filter, etc) compose more intuitively using lazy lists
-- python does this
-- could use iterators in place of full lazy lists
-
-Efficiency: a transducer can be called lazily, so let's assume it is. Both approaches will then
-generate one sequence element at a time. To get this element, here's what happens:
-
-td
-- the FIRST transducer in the composition chain consumes elements and passes them to
-  the second
-- and so on
-- the FINAL transducer generates an object and returns it
-- this chain is evaluated lazily so that the initial input will only be processed up to the point
-  where the first element in the final output is generated
-
-- the last transducer in the chain must be lazy
-
-llist
-- the LAST lazy list function in the composition chain is asked to compute its head
-- this function's input is another lazy list, so we ask for elements from that lazy list. Each
-  element we request is saved in a cons cell along the way. Once we've consumed all these elements
-  from the intermediate list, they are garbage and can be collected.
-- the second-to-last composed function asks for elements from the third  and so on
-
-- a lazy cons cell holding a function is returned
-- the intermediate value is computed and saved to the cons cell
-- the cons cell is thrown away after the next value is used
-
-So, every time an intermediate operation produces an object, one intermediate lazy cons cell is
-created.
-
-Third choice: iterators. It is possible to just create lazy iterator objects which don't have any
-cons cells. This may be an appealing option.
-
-
-** Version 0 Spec
-
-If anyone other than me ever tries to read this, I'm sorry. This is a "complete" specification of
-version 0 of the fn programming language (i.e. complete enough for me, the language designer, to
-remember the decisions I've made so far).
-
-*** Macros
-
-#+BEGIN_SRC fn
-;; define a macro
-(defmacro NAME (ARG-LIST...)
-  "Doc string"
-  MACRO-BODY)
-#+END_SRC
-
-Macros work in the usual lisp way, and they are unsanitary. Macro functions may return function
-objects as part of their outputs. This is encouraged as a way to prevent lexical variable
-definitions from colliding with global module or function names.
-
-*Note:* In the future, some facility e.g. a ~global~ special form may be introduced which allows global
-variables to be accessed from macros without needing to include them as literals. Such a form would
-possibly return a pointer object that unambiguous denoted the variable being referenced.
-
-
-*** Syntax
-
-Syntax is standard lisp parenthesized prefix notation. The following are all the special syntax
-characters:
-
-$()[]{}\;"',.
-
-all other non-whitespace characters are symbol constituents, that is, they are parsed as atoms, i.e.
-as symbols or numbers.
-
-
-**** Delimiters
-
-In typical lisp fashion, () are the delimiters denoting lists. In addition, [] and {} are matched
-delimiters for reading lists and dicts. In fact, they are converted by the reader.
-
-[a b c] -> (List a b c),
-and
-{:a 0 :b 1} -> (Dict :a 0 :b 1)
-
-Also, "" reads UTF-8 strings. It uses C/C++ escape sequences because those are better than the lisp
-ones and support Unicodes. Get over it.
-
-
-**** Comments
-
-There are no multi-line comments in fn. Only line-end comments, started by semicolons, are
-supported.
-
-
-**** Quotation
-
-Normal quote works as it usually does in Lisp. Quasiquote works the same but lacks a destructive
-splice.
-
-
-**** Escaping
-
-Escaping is when a backslash (\) character is placed in front of another character, thereby turning it
-into a symbol constituent.. Any character can be escaped in any context except for within a string, (where string
-escaping rules apply instead).
-
-
-** idea: global pointers
-
-I think it would be very useful to introduce a "pointer" data type (a better name might be GUID,
-place, or address) which is simply an unambiguous reference to some global variable (possibly also
-local?). GUID syntax could start with #G (or something) and would be very much analogous to symbols
-in Common Lisp, in that GUIDs, like CL's symbols, would be standalone places to store objects. This
-also allows an elegant alternative to gensyms, i.e. randomly-generated, disposable places.
-
-
-** Version 0 grammar
-
-#+BEGIN_SRC haskell
-program -> expr* EOF
-expr    -> constant
-         | compound
-         | unary
-         | dot
-
-constant -> STRING
-          | NUMBER
-
-compound -> paren
-          | bracket
-          | brace
-paren    -> "(" expr* ")"
-bracket  -> "[" expr* "]"
-brace    -> "{" expr* "}"
-
-unary      -> quote
-            | quasiquote
-            | unquote
-            | unquote-splicing
-            | dollar
-quot       -> "'" expr
-quasiquot  -> "`" expr
-unquot     -> "," expr
-unquot-splice -> ",@" expr
-dollar     -> "$(" expr* ")"
-            | "$[" expr* "]"
-            | "${" expr* "}"
-            | "$" quasiquote
-
-dot -> SYMBOL "." SYMBOL
-     | dot "." SYMBOL
-#+END_SRC
-
-#+BEGIN_SRC common-lisp
-  (defun token-is? (tok kind)
-    (eq (token-kind tok) kind))
-
-  (make-parser
-   ;; first form is grammar
-   ((program -> (* expr) @eof)
-    (expr -> constant / group / unary / dollar / dot)
-
-    (constant -> @string / @number)
-
-    (group -> paren / bracket / brace)
-    (paren -> @left-paren (* expr) @right-paren)
-    (bracket -> @left-bracket (* expr) @right-bracket)
-    (brace -> @left-brace (* expr) @right-brace)
-
-    (unary -> quot / quasiquot / unquot / unquot-splicing)
-    (quot -> @quot expr)
-    (quasiquot -> @backtick expr)
-    (unquot -> @comma expr)
-    (unquot-splice -> @comma-splice expr)
-
-    (dollar -> @dollar-paren (* expr) @right-paren
-            / @dollar-bracket (* expr) @right-bracket
-            / @dollar-brace (* expr) @right-brace
-            / @dollar-backtick expr)
-
-    (dot -> var / dot @dot var)
-    (var -> @symbol))
-
-   ;; remaining forms are callbacks for nonterminals. Whenever a reduce is performed, the callback
-   ;; corresponding to the generated nonterminal is invoked with a single argument, a list of the
-   ;; POBJs used to make this pattern.
-   (constant #'constant-fun)
-   (dot #'dot-fun)
-   (var #'var-fun)
-   )
-
-#+END_SRC
-
-
-** Alternative: Virtual Memory and Built-in tags
-
-I don't think I'll do this because keeping full 64-bit pointers would make foreign code interop and
-low-level code writing much easier.
-
-Suppose we limit ourselves to 56-bit pointers, which is still more than enough memory. Then, we have
-8 bytes of the string which we can use as a type tag. We can use a variable-length tagging scheme to
-get 62-bit fixed-width integers and if we pick tag 00 (binary) for those, we can use CPU native
-integer arithmetic operations. It would also be possible to truncate 64-bit floating point numbers
-to 62-bit precision by dropping the two rightmost digit, allowing use of x87 hardware and making
-passing around of numbers, etc, much more efficient. A downside of this approach is that it would
-give us less than the maximum 256 possible type tags that exist right now.
-
-
-** Proposal: Multipass optimization
-
-First pass would macroexpand and then evaluate all the forms in order. After this first pass, we
-would have all of this information:
-
-- types of all immutable global variables
-- function parameter lists
-- fully macro-expanded function bodies
-
-Some nice things we could do next:
-
-- replace (global, non-dynamic) variables with direct references to their value cells
-- replace local variable environments with numeric arrays, allowing direct access of local variable
-  cells
-- 
-
-** Proposal: Method generalization
-
-#+BEGIN_SRC fn
-(def ((add-method String (or Int Float)) left right)
-  (append left right))
-#+END_SRC
