@@ -1,0 +1,273 @@
+(def (not x)
+  (if x
+      false
+      true))
+
+(defmacro (or x & rest)
+  (if (empty? rest)
+      x
+      (let (g (gensym))
+        `(let (,g ,x)
+           (if ,g ,g (or ,@rest))))))
+
+(defmacro (and x & rest)
+  (if (empty? rest)
+      x
+      (let (g (gensym))
+        `(let (,g ,x)
+           (if ,g
+               (and ,@rest)
+               ,g)))))
+
+
+(def (nth n seq)
+  (if (= n 0)
+      (head seq)
+      (nth (- n 1) (tail seq))))
+
+;; An lcons is a single cell in a lazy list.
+(defclass (LCons hd tl))
+;; lazy-lists hold a thunk that returns their value, which may be either an LCons or null. When
+;; lazy-lists are created, take care to ensure that they are memoized. This is accomplished by
+;; defining them recursively. The initial thunk will not only compute the value, but will overwrite
+;; itself with a new thunk that just returns the precomputed value.
+(defclass (Lazy-List x))
+
+(def ((head Lazy-List) seq)
+  (let (v (seq.x))
+    (if v
+        v.hd
+        null)))
+
+(def ((tail Lazy-List) seq)
+  (let (v (seq.x))
+    (if v
+        v.tl
+        seq)))
+
+(def ((empty? Lazy-List) seq)
+  (= (seq.x) null))
+
+(def ((cons Lazy-List) hd seq)
+  (let (v (LCons hd seq.x))
+    (Lazy-List (fn () v))))
+
+(def lazy-empty (Lazy-List (fn () null)))
+
+(def (foldl fun init seq)
+  "
+Perform a left fold on a sequence.
+
+Parameters:
+  fun  : a reduction function. Called with two arguments. The first is the accumulated value 
+         (init on the first call), and the second is an element from the sequence.
+  init : initial value
+  seq  : sequence
+
+Returns:
+  The result of the fold.
+"
+  (let (recur (fn (acc src)
+                (if (empty? src)
+                    acc
+                    (recur (fun acc (head src))
+                           (tail src)))))
+    (recur init seq)))
+
+(def (foldr fun init seq)
+  "
+Perform a right fold on a sequence.
+
+Parameters:
+  fun  : a reduction function. Called with two arguments. The first is an element from seq, and the
+         second is the result of folding the elements to the right of it (init on the first call).
+  init : initial value
+  seq  : sequence
+
+Returns:
+  The result of the fold.
+"
+  (if (empty? seq)
+      init
+      (fun (head seq)
+           (foldr fun init (tail seq)))))
+
+(def (rev-list lst)
+  "Reverse a sequence and return it as a list"
+  (foldl $(cons $1 $0) [] lst))
+
+(def (force llst)
+  "Force a lazy list evaluation"
+  (foldl $(cons $1 $0) [] (foldl $(cons $1 $0) [] llst)))
+
+(def ((show Lazy-List) l)
+  (String "#<Lazy-List:"
+          (show (force l))
+          ">"))
+
+(defmacro (lcons hd tl)
+  `(thunk->lazy-list (fn () (LCons ,hd ,tl))))
+
+(def (thunk->lazy-list fun) 
+  "Make a memoized lazy list from a thunk returning null or an LCons."
+  ;; use let to create a recursive thunk for fun
+  (let (res (Lazy-List
+             (fn ()
+               (let (v (fun))
+                 ;; after the first evaluation, replace the thunk with a constant function
+                 (set res.x (fn () v))
+                 v))))
+    res))
+
+(def (->lazy-list seq)
+  (thunk->lazy-list
+   $(if (empty? seq)
+        null
+        (LCons (head seq) (->lazy-list (tail seq))))))
+
+(def (map fun seq)
+  "Map lazily, returning a lazy list"
+  (thunk->lazy-list
+   $(if (empty? seq)
+        null
+        (LCons (fun (head seq))
+               (map fun (tail seq))))))
+
+(def (map0 fun seq)
+  "Map eagerly, returning a list"
+  (rev-list (foldl $(cons (fun $1) $0) [] seq)))
+
+(def (filter fun seq)
+  "Filter lazily, returning a lazy list"
+  (thunk->lazy-list
+   $(cond
+      (empty? seq)
+        null
+      (fun (head seq))
+        (LCons (head seq)
+               (filter fun (tail seq)))
+      true
+        ((get (filter fun (tail seq)) 'x)))))
+
+(def (filter0 fun seq)
+  "Filter eagerly, returning a list"
+  (rev-list (foldl $(if (fun $1)
+                        (cons $1 $0)
+                        $0)
+                   []
+                   seq))
+  (thunk->lazy-list
+   $(cond
+      (empty? seq)
+        null
+      (fun (head seq))
+        (LCons (head seq)
+               (filter fun (tail seq)))
+      true
+        ((get (filter fun (tail seq)) 'x)))))
+
+(def (zip & seqs)
+  "Zip seqs, returning a lazy list of (normal) lists."
+  (thunk->lazy-list
+   $(if (any empty? seqs)
+        null
+        (LCons (map0 head seqs)
+               (apply zip (map0 tail seqs))))))
+
+(def (take n seq)
+  "Lazily take the first n elements from seq"
+  (thunk->lazy-list
+   $(cond
+      (= n 0) null
+      (empty? seq) null
+      true (LCons (head seq)
+                  (take (- n 1) (tail seq))))))
+
+(def (drop n seq)
+  "Lazily drop the first n elements from seq"
+  (thunk->lazy-list
+   $(if (= n 0)
+        (->lazy-list seq)
+        ((get (drop (- n 1) (tail seq)) 'x)))))
+
+(def (take-while fun seq)
+  "Lazily take elements from seq as long as (fun (head seq)) is true."
+  (thunk->lazy-list
+   $(cond
+      (empty? seq) null
+      (fun (head seq))
+        (LCons (head seq)
+               (take-while fun (tail seq)))
+      true null)))
+
+(def (drop-while fun seq)
+  "Lazily drop elements from seq as long as (fun (tail seq)) is true."
+  (thunk->lazy-list
+   $(cond
+      (empty? seq) null
+      (fun (head seq)) (drop-while fun (tail seq))
+      true (->lazy-list seq))))
+
+(def (split-while fun seq)
+  "Equivalent to [(take-while fun seq) (drop-while fun seq)] but avoids redundant calculations."
+  ;; precompute tests as a lazy list
+  (let (tests (map $[$ (fun $)] seq))
+    [(map head (take-while $(nth 1 $) tests))
+     (map head (drop-while $(nth 1 $) tests))]))
+
+(def (any? fun seq)
+  "Checks if any element of seq satisfies fun."
+  (if (empty? seq)
+      false
+      (or (fun (head seq))
+          (any? fun (tail seq)))))
+
+(def (every? fun seq)
+  "Checks if every element of seq satisfies fun"
+  (if (empty? seq)
+      (and (fun (head seq))
+           (every? fun (tail seq)))))
+
+(def (contains? x seq)
+  "Tell if x is contained within seq"
+  (cond
+    (empty? seq) false
+    (= (head seq) x) true
+    true (contains? x (tail seq))))
+
+(def (dedupe seq)
+  "Remove duplicates from a list"
+  (let (dedupe-rest
+        (fn (seen seq)
+          (thunk->lazy-list
+           $(cond
+              (empty? seq) null
+              (contains? (head seq) seen)
+                ((get (dedupe-rest seen (tail seq)) 'x))
+              true
+                (LCons (head seq)
+                       (dedupe-rest (cons (head seq) seen)
+                                    (tail seq)))))))
+    (dedupe-rest [] seq)))
+
+(def (map-io x)
+  (println (String "Reading " x " for the first time"))
+  x)
+
+;;(defvar v (filter $(> $ 3) (map map-io (->lazy-list [1 4 2 5 3 6 7 8 9]))))
+
+; (println (String "Getting v[2]: "))
+; (println (String "Got " (nth 2 v)))
+; (defvar lz (map (fn (x) x) [1 -1 2 -2]))
+; (println (force (filter $(>= $ 0) [1 -1 2])))
+
+; (println (nth 0 lz))
+
+; (println (force (dedupe [2 1 3 1 1 2 1 1 2])))
+
+; (println (or (println "1")
+;              true
+;              (println "2")
+;              (println "3")))
+
+; (println "Done.")
