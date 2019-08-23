@@ -432,7 +432,7 @@ interpreter.
 <braces>    ::= "{" <expr>* "}"
 
 <dot> ::= <dot-part> <symbol>
-<dot-part> ::= <symbol> "." | <dot-part> "."
+<dot-part> ::= <symbol> "." | <dot> "."
 
 <dollar> ::= "$(" <expr*> ")"
            | "$[" <expr*> "]"
