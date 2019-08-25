@@ -1,11 +1,12 @@
 (in-package :fn.eval)
 
 (use-package :fn.test)
+(use-package :fn.boot)
 
 (defun eval-str (str)  
   (eval-ast (car (fn.parser:parse-string str))))
 (defun var-value (str)
-  (aif (get-cell *current-env* (fnintern str))
+  (aif (env-cell *current-env* (fnintern str))
        (cell-value it)
        nil))
 
@@ -30,7 +31,7 @@
 (define-test (eval-str "(apply + [1 2 3])") (num 6))
 (define-test (eval-str "(apply + 1 [1 2 3])") (num 7))
 (define-error-test (eval-str "(apply + 1)")
-    :message "Runtime error: apply: last argument must be a list")
+    :message "Runtime error: apply: Last argument must be a list")
 
 ;; class-of on built-in types
 (define-test (eval-str "(class-of (class-of 6))") (var-value "Class"))
@@ -66,7 +67,10 @@
     :no-error t)
 (define-test (eval-str "(m 2)") "(num 2.0)")
 (define-error-test (eval-str "(m \"str\")")
-    :message "Runtime error: Method not implemented on types (String).")
+    :message "Runtime error: m: Method not implemented on types (String)."
+    )
+
+(defvar q)
 
 ;; defvar and instantiation
 (define-error-test (eval-str "(defvar v (Vec2 1 -1))") :no-error t)
@@ -85,7 +89,7 @@
 (define-test (eval-str "v.x") (num 4))
 
 
-;; fresh interpreter for running
-(let* ((*interpreter* (init-interpreter))
-       (*current-env* (init-env nil nil (car (interpreter-modules *interpreter*)))))
+;; fresh runtime for running
+(let* ((*runtime* (init-runtime))
+       (*current-env* (init-env)))
   (run-tests))

@@ -920,6 +920,7 @@ When ~unquote-splice~ appears outside of a quasiquoted list, an error is generat
 - (loop parameters init-args & body)
 - ->, ->>, ->as
 - comp
+- and, or, not
 
 ** TODO Macro Writing/Code Manipulation
 
@@ -946,6 +947,12 @@ When ~unquote-splice~ appears outside of a quasiquoted list, an error is generat
 - asin, acos, atan
 - sinh, cosh, tanh
 - asinh, acosh, atanh
+
+- bit-and
+- bit-or
+- bit-xor
+- bit-nand
+- >>, <<
 
 ** TODO Sequences
 
@@ -1014,6 +1021,43 @@ This should encompass all basic POSIX file functionality.
 
 This section is a bunch of garbage to help me remember things. (This is the clean garbage. The real
 garbage is in a local directory).
+
+** Proposal: change set name to set!
+
+The Scheme/Racket naming convention for stateful functions is pretty good.
+
+** Proposal: object internal representations
+
+There are several different representations of objects in fn.
+
+- List
+- Record
+- Vector (trie)
+- Table (hash trie)
+- (possibly?) Byte-Array
+- (possibly?) Array
+
+Suppose you could declare the internal representation of a class:
+
+#+BEGIN_SRC fn
+(defclass (Posix-Env & args)
+  'doc "A set of environment variables."
+  'representation Table
+  )
+
+(def (
+
+(def (posix-env-var p str)
+  (get (internals p) str))
+#+END_SRC
+
+** Proposal: forced sets of immutable objects
+
+We could add an operator, called set!, set-forcefully, force-set, fset, or something like that. This
+operator could mutate lists, tries, objects, etc that are normally immutable. (Currently, I like
+force-set). This could even be used with conses. Downsides of this are that now we can fuck
+ourselves in a wide variety of ways including potentially setting a cdr to a non-list value. This
+complicates error reporting code.
 
 ** Proposal: module names and paths
 

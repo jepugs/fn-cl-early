@@ -21,7 +21,7 @@
   (:export :code :origin :data :make-code :code-origin :code-data :code? :code-intern :ast->code
            :code-list? :code-sym? :code-sym-name :code-sym-id
            :code-literal? :code-quoted-sym? :code->fnvalue :fnvalue->code :code->param-list
-           :code-dotted-get? :dotted-get-root :dotted-get-keys :code-get-expr?
+           :code-dotted-get? :code-get-expr?
            :validate-code
            ;; symbol names (consider removing)
            :bracket-sym-name :brace-sym-name :dollar-sym-name :dot-sym-name
@@ -151,6 +151,7 @@
          (every #'code-sym? data)
          (eq (code-data (car data)) quote-sym))))
 
+;;; the function CODE-DOTTED-GET? is in code.lisp
 (defun code-get-expr? (c)
   "Tell if an expression is a valid get expression"
   (and (code-list? c)
@@ -158,28 +159,13 @@
        (not (length< (code-cdr c) 2))))
 
 (defun code-dotted-get? (c)
-  "Tell if an expression is a dotted get, aka a get expression where the object code is a
- symbol (variable) or another dotted get and the field names are all quoted symbols."
+  "Tell if an expression is a dotted get (a get expression which could have been produced solely
+ using dot syntax)."
   (and (code-get-expr? c)
-       (every #'code-quoted-sym? (code-cddr c))
+       (length= (code-data c) 3)
+       (code-quoted-sym? (code-caddr c))
        (or (code-sym? (code-cadr c))
            (code-dotted-get? (code-cadr c)))))
-
-(defun dotted-get-root (c)
-  "Get the sym corresponding to the root object of a dotted get. Assumes C satisfies
- CODE-DOTTED-GET."
-  (if (code-list? (code-cadr c))
-      (dotted-get-root (code-cadr c))
-      (code-data (code-cadr c))))
-
-(defun dotted-get-keys (c)
-  "Get a list of the keys of a dotted get in the order they would be applied."
-  (let ((keys (mapcar $(code-data (code-cadr $))
-                      (code-cddr c))))
-    (cond ((code-list? (code-cadr c))
-           (append (dotted-get-keys (code-cadr c))
-                   keys))
-          (t keys))))
 
 (defun code->fnvalue (c)
   (with-slots (data) c

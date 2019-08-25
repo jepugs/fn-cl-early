@@ -17,161 +17,27 @@
 
 (defpackage :fn.eval
   (:documentation "expression evaluator")
-  (:use :cl :fn.util :fn.ast :fn.values :fn.code)
-  (:export :eval-ast :eval-code :eval-file :fnintern :fngensym :safe-add-global :*current-env*
-           :*interpreter* :*interpreter-initialization-hook* :init-env :init-interpreter
-           :runtime-error :runtime-warning))
+  (:use :cl :fn.util :fn.ast :fn.runtime :fn.values :fn.code :fn.runtime)
+  (:export :eval-ast :eval-code :eval-file))
 
 (in-package :fn.eval)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-;;; runtime errors are handled by the eval function so that the offending line of code can be
-;;; implicated
-
-(eval-when (:load-toplevel :compile-toplevel :execute)
-  (define-condition runtime-error (error)
-    ((message :initarg :message)))
-
-  (defmacro handling-runtime-errors (code &body body)
-    "Converts runtime errors to fn errors"
-    (with-gensyms (x code-sym)
-      `(let ((,code-sym ,code))
-         (handler-case (progn ,@body)
-           (runtime-error (,x)
-             (fn-error (code-origin ,code-sym)
-                       "Runtime error: ~a"
-                       (slot-value ,x 'message)))))))
-
-  (defmacro runtime-error (format-string &rest format-args)
-    `(error 'runtime-error
-            :message (format nil ,format-string ,@format-args)))
-
-  ;; one day this will be implemented
-  (defmacro runtime-warning (format-string &rest format-args)
-    (declare (ignore format-string format-args))
-    nil))
-
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-;;;; interpreter state and name resolution
-
-(defstruct interpreter
-  (modules)
-  (symtab (make-symtab)))
-
-;;; these dynamic variables are used throughout to track lexical environment throughout the
-;;; different evaluation functions
-(defparameter *current-env* nil "Lexical environment used for evaluation")
-(defparameter *interpreter* nil "Interpreter used for evaluation")
-
-(defun current-module ()
-  (env-module *current-env*))
-
-;; function called to initialize the interpreter
-(defvar *interpreter-initialization-hook* nil)
-
-(defun find-module-by-name (sym)
-  "Find a module corresponding to the provided symbol"
-  (find-if $(eq (fnmodule-name $) sym) (interpreter-modules *interpreter*)))
-
-(defun init-interpreter ()
-  "Initialize an interpreter with built-in globals and symbols and a default module."
-  (let* ((symtab (make-symtab))
-         (mod (make-fnmodule :name (symtab-intern "__built-in" symtab)))
-         (*interpreter* (make-interpreter :modules (list mod) :symtab symtab))
-         (*current-env* (init-env nil nil mod)))
-    ;; call the hook after setting *interpreter* and *current-env*
-    (if *interpreter-initialization-hook*
-        (funcall *interpreter-initialization-hook*))
-    *interpreter*))
-
-(defun init-env (syms &optional (parent *current-env*) (module nil))
-  "Create an ENV with uninitialized value cells for each symbol in SYMS."
-  (let ((table (make-hash-table :size (min (ceiling (* 1.5 (length syms)))
-                                           10)))
-        (module (or module
-                    (if parent
-                        (env-module parent)
-                        (find-module-by-name (fnintern "__built-in"))))))
-    (map nil
-         $(setf (gethash (sym-id $) table)
-                (make-cell :mutable t))
-         syms)
-    (make-env :table table
-              :module module
-              :parent parent)))
-
-(defun fnintern (name &optional (interpreter *interpreter*))
-  "Get an internal symbol using INTERPRETER's symbol table."
-  (symtab-intern name (interpreter-symtab interpreter)))
-
-(defun fngensym (&optional (interpreter *interpreter*))
-  "Get an uninterned symbol that still has a unique ID."
-  (let ((st (interpreter-symtab interpreter)))
-    (with-slots (fn.values::next-id) st
-      (incf (slot-value st 'fn.values::next-id))
-      (fn.values::make-sym :name (format nil "GENSYM-~a" fn.values::next-id)
-                          :id fn.values::next-id))))
-
-;; (setf *interpreter* (init-interpreter #'init-interpreter-hook))
-;; (setf *current-env* (init-env nil nil (car (interpreter-modules *interpreter*))))
-
-(defun safe-add-global (sym value &optional mutable function-name)
-  "Add a global variable without trampling any definitions."
-  (aif (get-module-cell (current-module) sym)
-       (if (cell-mutable it)
-           (progn
-             (runtime-warning "~a: Redefining variable ~a"
-                              function-name
-                              (show sym))
-             (setf (cell-value it) value))
-           (runtime-error "~a: Attempt to redefine immutable variable ~a"
-                          function-name
-                          (show sym)))
-       (add-global-cell *current-env* sym (make-cell :value value
-                                                     :mutable mutable))))
-
-(defun get-var (name)
-  (aif (get-cell *current-env* name)
-       (cell-value it)
-       (runtime-error "Undefined variable ~s" (sym-name name))))
-
-(defun set-var (name value)
-  (let ((cell (get-cell *current-env* name)))
-    (cond
-      ((null cell)
-       (runtime-error "set: Undefined variable ~s" (sym-name name)))
-
-      ((not (cell-mutable cell))
-       (runtime-error "set: Attempt to set immutable variable ~s"
-                      (sym-name name)))
-
-      (t (cell-mutable cell)
-         (setf (cell-value cell) value)))))
-
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
 ;;;; main evaluation functions
 
-(defun eval-ast (a &optional (env *current-env*) (interpreter *interpreter*))
+(defun eval-ast (a &optional (env *current-env*) (runtime *runtime*))
   "Convert an AST object to code, check it syntax errors, and evaluate it."
-  (let* ((*interpreter* (or interpreter
-                            (init-interpreter)))
-         (*current-env* (or env
-                            (init-env nil nil (find-module-by-name (fnintern "__built-in")))))
-         (code (ast->code a (interpreter-symtab *interpreter*))))
+  (let* ((*runtime* (or runtime (make-runtime)))
+         (*current-env* (or env (init-env)))
+         (code (ast->code a (runtime-symtab *runtime*))))
     (validate-code code)
-    (eval-code code env interpreter)))
+    (eval-code code env runtime)))
 
-(defun eval-code (c &optional (env *current-env*) (interpreter *interpreter*))
+(defun eval-code (c &optional (env *current-env*) (runtime *runtime*))
   "Evaluate a code object."
-  (let* ((*interpreter* (or interpreter
-                            (init-interpreter)))
-         (*current-env* (or env
-                            (init-env nil nil (find-module-by-name (fnintern "__built-in"))))))
+  (let* ((*runtime* (or runtime (make-runtime)))
+         (*current-env* (or env (init-env))))
     (handling-runtime-errors c
       (cond
         ((code-literal? c) (code-data c))
@@ -187,9 +53,8 @@
 
 (defun eval-var (c)
   "Evaluate a variable reference. Assumes CODE contains a symbol"
-  (aif (get-cell *current-env* (code-data c))
-       (cell-value it)
-       (runtime-error "Unbound symbol: ~a" (code-sym-name c))))
+  (or (env-var *current-env* (code-data c))
+      (runtime-error "No such variable: ~a" (code-sym-name c))))
 
 (defun eval-body (body &optional fun-name)
   "Evaluate a list of code objects in order, returning the last expresison."
@@ -256,34 +121,16 @@
        (eval-get-op-list c))
       ((not (sym? op)) (eval-funcall c))
       ;; check for macros
-      (t (aif (get-macro *current-env* op)
+      (t (aif (env-macro *current-env* op)
               (let ((code (expand-macro it c)))
                 (validate-code code)
                 (eval-code code))
               (eval-funcall c))))))
 
-(defun var-module (obj)
-  (aif (get-module-cell *current-env* obj)
-       (if (fnmodule? (cell-value it))
-           (cell-value it)
-           nil)
-       nil))
-
-(defun dotted-get-macro (root keys)
-  ;; TODO: adjust to allow descending macros with multiple keys
-  (let ((next-mod (aif (get-module-cell (current-module) root)
-                       (cell-value it)
-                       nil)))
-    (if (and (fnmodule? next-mod)
-             (= (length keys) 1))
-        (get-module-macro next-mod (car keys))
-        nil)))
-
 (defun eval-get-op-list (c)
   "Evaluate a list where the head is a dotted get form."
-  (let ((root (dotted-get-root (code-car c)))
-        (keys (dotted-get-keys (code-car c))))
-    (aif (dotted-get-macro root keys)
+  (let ((op (code-car c)))
+    (aif (dotted-get-macro op)
          (let ((code (expand-macro it c)))
            (validate-code code)
            (eval-code code))
@@ -360,8 +207,8 @@
   "Extend OUTER-ENV with variable bindings created by PARAM-LIST and ARGS."
   (let* ((binding-alist (remove-if $(eq (car $) wildcard-sym)
                                    (params-alist param-list args outer-env op-name)))
-         (*current-env* (init-env (mapcar #'car binding-alist) outer-env)))
-    (mapc $(set-var (car $) (cdr $)) binding-alist)
+         (*current-env* (extend-env (mapcar #'car binding-alist) :parent outer-env)))
+    (mapc $(setf (env-var *current-env* (car $)) (cdr $)) binding-alist)
     *current-env*))
 
 (defun expand-macro (macro-fun c)
@@ -384,7 +231,7 @@
 (defun call-fnmethod (m args)
   (with-slots (name params dispatch-params default-impl) m
     (let* ((new-env (bind-params params args *current-env* name))
-           (types (mapcar $(get-class-of (cell-value (get-cell new-env $)))
+           (types (mapcar $(get-class-of (env-var new-env $))
                           dispatch-params)))
       (aif (get-impl m types)
            (call-fun it args)
@@ -442,7 +289,7 @@
         ((fnobj? v) (fnobj-class v))))
 
 (defun class-by-name (sym)
-  (aif (get-module-cell (current-module) sym)
+  (aif (module-cell (current-module) sym)
        (if (fnclass? (cell-value it))
            (cell-value it)
            (runtime-error "not a class: ~a" (show sym)))
@@ -483,7 +330,7 @@
     fun))
 
 (defun eval-method-def (name class-syms params-code body)
-  (let* ((m (aif (get-cell *current-env* name) (cell-value it) nil))
+  (let* ((m (env-var *current-env* name))
          (params (code->param-list params-code)))
     (unless m
       (runtime-error "def: No such method ~s." (show name)))
@@ -513,7 +360,7 @@
          (fields (param-list-vars params))
          (new-class (make-fnclass :name name :fields fields)))
     (setf (fnclass-constructor new-class) (make-constructor new-class params))
-    (safe-add-global name new-class  nil "defclass")
+    (safe-add-global name new-class nil "defclass")
     new-class))
 
 (defun make-constructor (class params)
@@ -521,15 +368,18 @@
   (with-slots (name fields) class
     (make-fnfun :params params
                 :body $(make-fnobj :class class
-                                   :contents (env-table (bind-params params $ nil))))))
+                                   :contents (env-table (bind-params params
+                                                                     $
+                                                                     *current-env*
+                                                                     "defclass"))))))
 
 ;;; defmacro
 (defun eval-defmacro (name params-code body-code)
-  (set-global-macro *current-env*
-                    name
-                    (make-fnfun :params (code->param-list params-code)
-                                :body body-code
-                                :closure *current-env*))
+  (safe-add-global-macro name
+                         (make-fnfun :params (code->param-list params-code)
+                                     :body body-code
+                                     :closure *current-env*)
+                         "defmacro")
   fnnull)
 
 ;;; defmethod
@@ -575,9 +425,8 @@
                   (let ((env0 (bind-params params args closure)))
                     ;; add the alternative symbol for the first arg
                     (if (>= max-id 0)
-                        (add-cell env0
-                                  (fnintern "$")
-                                  (get-cell env0 (fnintern "$0"))))
+                        (setf (env-cell env0 (fnintern "$"))
+                              (env-cell env0 (fnintern "$0"))))
                     (eval-code expr env0))))))
 
 (defun dollar-id-string? (str)
@@ -676,7 +525,7 @@
     (runtime-error "get: Key for module ~s is not a symbol: ~s"
                    (show (fnmodule-name obj))
                    (show key)))
-  (aif (get-module-cell obj key)
+  (aif (module-cell obj key)
        (cell-value it)
        (runtime-error "get: Module ~s contains no variable named ~s"
                       (show (fnmodule-name obj))
@@ -735,33 +584,27 @@
 
 ;;; import
 (defun eval-import (sym as-args)
-  (let ((new-name (if as-args
-                      (code-data (cadr as-args))
-                      sym)))
-    ;; check if the symbol is already bound
-    (aif (get-module-cell (current-module) new-name)
-         ;; if we're reloading the same module as was in that variable before, that's ok, so we
-         ;; set the value cell to NULL. Otherwise, we let SAFE-ADD-GLOBAL binding semantics
-         ;; decide what to do.
-         (when (and (fnmodule? (cell-value it))
-                    (eq (fnmodule-name (cell-value it)) sym))
-           (runtime-warning "import: Reloading module ~s" (sym-name sym))
-           ;; FIXME: deleting the value cell probably will cause optimization bugs
-           (add-global-cell *current-env* new-name nil))
-         nil)
-    (let ((mod (init-import-module sym (find-module-by-name (fnintern "__built-in")))))
-      ;; load the module code
+  (let* ((name (if as-args (code-data (cadr as-args)) sym))
+         (cell (module-cell (current-module) name)))
+    (unless (or (null cell)
+                (cell-mutable cell)
+                (fnmodule? (cell-value cell)))
+      (runtime-error "import: Attempt to redefine immutable variable"))
+    (let ((mod (init-import-module sym)))
       (unless mod
         (runtime-error "import: Couldn't find module by name ~s" (sym-name sym)))
-      (handler-case (let ((*current-env* (init-env nil nil mod)))
-                      (eval-file (fnmodule-loaded-from mod)))
+      (handler-case (let ((*current-env* (init-env mod)))
+                      (eval-file (fnmodule-filename mod)))
         (fn-error (x)
           (runtime-error "import: Error importing ~s:~%~a"
                          (sym-name sym)
                          x)))
-      ;; set the variable and add to the modules list
-      (push mod (interpreter-modules *interpreter*))
-      (safe-add-global new-name mod nil "import")
+      ;; if the module already exists, we just copy the new value cells into it.
+      (if (fnmodule? (cell-value cell))
+          (progn (runtime-warning "import: Reloading module ~s" (sym-name sym))
+                 (module-import-syms (cell-value cell) mod))
+          (progn (push mod (runtime-modules *runtime*))
+                 (safe-add-global name mod nil "import")))
       mod)))
 
 (defun eval-file (path)
@@ -777,10 +620,10 @@
 ;;; let
 (defun eval-let (bindings body)
   (let* ((binding-pairs (group 2 (code-data bindings)))
-         (*current-env* (init-env (mapcar $(code-data (car $))
-                                          binding-pairs))))
-    (mapc $(set-var (code-data (car $))
-                    (eval-code (cadr $)))
+         (*current-env* (extend-env (mapcar $(code-data (car $))
+                                            binding-pairs))))
+    (mapc $(setf (env-var *current-env* (code-data (car $)))
+                 (eval-code (cadr $)))
           binding-pairs)
     (eval-body body)))
 
@@ -853,8 +696,8 @@
 ;;; set
 (defun eval-set (place value-code)
   (cond
-    ((code-sym? place) (set-var (code-data place)
-                                (eval-code value-code)))
+    ((code-sym? place) (setf (env-var *current-env* (code-data place))
+                             (eval-code value-code)))
     ((code-get-expr? place)
      (let* ((root-obj (eval-code (code-cadr place)))
             (keys (code-cddr place)))

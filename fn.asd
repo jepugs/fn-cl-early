@@ -20,6 +20,7 @@
                (:file "parser")
                (:file "values")
                (:file "code")
+               (:file "runtime")
                (:file "eval")
                (:file "boot")
                (:file "main")))

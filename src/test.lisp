@@ -32,15 +32,15 @@
 (defstruct unit-test
   (expr nil :read-only t)
   (thunk nil :type function :read-only t)
-  (expected-result nil :read-only t)
+  (result-thunk nil :read-only t)
   ;; this test is used to compare the result of the thunk with the
   (test #'equal :type function :read-only t))
 
 (defun run-test (unit-test)
-  (with-slots (expr thunk expected-result test) unit-test
+  (with-slots (expr thunk result-thunk test) unit-test
     (handler-case 
         (let ((res (funcall thunk)))
-          (if (funcall test expected-result res)
+          (if (funcall test (funcall result-thunk) res)
               (progn (format t "[pass] ~s~%" expr)
                      t)
               (progn (format t "[FAIL] ~s~%" expr)
@@ -61,7 +61,7 @@
  types of error conditions are not handled and will result in the test program crashing."
   `(push (make-unit-test :expr ',expression
                          :thunk (lambda () ,expression)
-                         :expected-result ,expected-value
+                         :result-thunk (lambda () ,expected-value)
                          :test ,test)
          (test-suite-tests ,suite)))
 

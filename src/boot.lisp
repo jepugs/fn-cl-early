@@ -1,4 +1,4 @@
-;;;; boot.lisp -- interpreter bootstrapping
+;;;; boot.lisp -- runtime bootstrapping
 
 ;;;; This file is part of fn.
 
@@ -16,8 +16,9 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defpackage :fn.boot
-  (:documentation "interpreter bootstrapping")
-  (:use :cl :fn.util :fn.values :fn.code :fn.eval))
+  (:documentation "runtime bootstrapping")
+  (:use :cl :fn.util :fn.values :fn.code :fn.runtime :fn.eval)
+  (:export :init-runtime))
 
 (in-package :fn.boot)
 
@@ -52,7 +53,7 @@
                                                                   ,name)
                                            ,@(cdr $))))
                       `(set-impl method
-                                 (mapcar #'fn.eval::get-var (list ,@(car $)))
+                                 (mapcar $(env-var *current-env* $) (list ,@(car $)))
                                  (make-fnfun :body
                                              (lambda (args)
                                                ;; used to check parameters
@@ -93,7 +94,7 @@
 (defun bool (x)
   (if x true false))
 
-(defun init-interpreter-hook ()
+(defun init-runtime-hook ()
   (with-syms ("x" "seq" "obj" "left" "right")
     ;; built-in classes
     (fn-defclass "Bool")
@@ -214,10 +215,10 @@
           false))
 
     (fn-defun "print" (= 1)
-      (princ (fn.eval::call-fnmethod (fn.eval::get-var (fnintern "show")) args))
+      (princ (fn.eval::call-fnmethod (env-var *current-env* (fnintern "show")) args))
       fnnull)
     (fn-defun "println" (= 1)
-      (princ (fn.eval::call-fnmethod (fn.eval::get-var (fnintern "show")) args))
+      (princ (fn.eval::call-fnmethod (env-var *current-env* (fnintern "show")) args))
       (terpri)
       fnnull)
     (fn-defun "load" (= 1)
@@ -240,6 +241,9 @@
     ;;(fn.eval::eval-file )
     ))
 
-
-(eval-when (:load-toplevel :execute)
-  (setf *interpreter-initialization-hook* #'init-interpreter-hook))
+(defun init-runtime ()
+  "Initialize the fn runtime."
+  (let* ((*runtime* (make-runtime))
+         (*current-env* (init-env)))
+    (init-runtime-hook)
+    *runtime*))

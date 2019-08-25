@@ -37,18 +37,10 @@
    ;; built-in methods
    :call-sym :get-method-sym :set-method-sym :add-method-sym :mul-method-sym :sub-method-sym
    ;; other built-in symbols
-   :as-sym :amp-sym :hash-sym :wildcard-sym
+   :as-sym :amp-sym :hash-sym :wildcard-sym :built-in-module-sym
    ;; sequences
    :fnlist :fnlist? :fnlist->list :fnlist-length :fnappend :fnmapcar :fnmapcan
    :fnstring :string? :table :table?
-   ;; modules and environments
-   :cell :make-cell :cell-value :value :cell-mutable :mutable
-   :make-env :add-global-cell :add-cell :get-module-cell :get-cell :get-macro :get-module-macro
-   :set-global-macro
-   :env-module :env-table :get-class
-   :fnmodule :name :loaded-from :vars :macros :make-fnmodule :fnmodule-name :fnmodule-vars
-   :fnmodule-macros :fnmodule-loaded-from :add-module-cell :fnmodule? :find-module-path
-   :*module-search-path* :init-import-module :module-copy-bindings
    ;; functions
    :param-list :make-param-list :pos :keyword :vari :param-list-pos :param-list-keyword
    :param-list-vari :param-list-vars :param-list-eqv
@@ -145,6 +137,7 @@
   (defparameter hash-sym (symtab-intern "#" template-symtab))
   (defparameter amp-sym (symtab-intern "&" template-symtab))
   (defparameter as-sym (symtab-intern "as" template-symtab))
+  (defparameter built-in-module-sym (symtab-intern "__built-in" template-symtab))
 
   ;; constants
   (def-syms "null" "true" "false")
@@ -235,122 +228,6 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-;;;; environments, functions, and objects
-
-;;; a generic memory cell. This wraps an fn value so that modifications to the value in the cell
-;;; will be seen across all closures, etc containing it
-(defstruct cell
-  value
-  (mutable nil :read-only t))
-
-(defstruct env
-  ;; hash table mapping symbol IDs onto cells.
-  (table (make-hash-table :test 'eql))
-  module
-  (parent nil))
-
-(defstruct (fnmodule (:predicate fnmodule?) :copier)
-  (name nil :type sym)
-  (loaded-from nil)
-  (vars (make-hash-table) :type hash-table)
-  (macros (make-hash-table) :type hash-table))
-
-;; module/environment functions
-(defun add-global-cell (env sym cell)
-  "Add a new lexical cell to an environment"
-  (setf (gethash (sym-id sym) (fnmodule-vars (env-module env)))
-        cell))
-
-(defun add-module-cell (mod sym cell)
-  "Add a new cell to a module"
-  (setf (gethash (sym-id sym) (fnmodule-vars mod))
-        cell))
-
-(defun add-cell (env sym cell)
-  "Add a new cell to a module given"
-  (setf (gethash (sym-id sym) (env-table env)) cell))
-
-(defun get-module-cell (mod sym)
-  "Get the CELL, if any, associated with SYM in the provided lexical environment and module. Returns
- NIL on failure."
-  (gethash (sym-id sym) (fnmodule-vars mod)))
-
-(defun get-cell (env sym)
-  "Get the CELL, if any, associated with SYM in the provided lexical environment and module. Returns
- NIL on failure."
-  (or (gethash (sym-id sym) (env-table env))
-      (aif (env-parent env)
-           (get-cell it sym)
-           (gethash (sym-id sym) (fnmodule-vars (env-module env))))))
-
-(defun get-macro (env sym)
-  "Get the macro associated with SYM in the provided lexical environment and module."
-  (gethash (sym-id sym) (fnmodule-macros (env-module env))))
-
-(defun get-module-macro (mod sym)
-  "Get the macro associated with SYM in the provided lexical environment and module."
-  (gethash (sym-id sym) (fnmodule-macros mod)))
-
-(defun set-global-macro (env sym value)
-  "Set the macro associated with SYM in the provided and module."
-  (setf (gethash (sym-id sym) (fnmodule-macros (env-module env))) value))
-
-(defun get-class (env sym)
-  "If sym is bound to a class object, then return that class. If sym is unbound or bound to another
- type of object, returns NIL."
-  (aif (get-cell env sym)
-       (if (fnclass? (cell-value it))
-           (cell-value it)
-           nil)
-       nil))
-
-;; modules and environments usually contain references back to the global environment (e.g. in
-;; function closures), so we have to do this to stop infinite print loops
-(defmethod print-object ((object env) stream)
-  (with-slots (table module parent) object
-    (format stream "<ENV:module=~s>" (sym-name (fnmodule-name module)))))
-(defmethod print-object ((object fnmodule) stream)
-  (format stream "<MODULE:~s>" (sym-name (fnmodule-name object))))
-
-;; module search
-(defvar *module-search-path* '("./" "/usr/local/lib/fn/modules/" "/usr/lib/fn/modules/"))
-;;; FIXME: non-portable usage of SBCL's DIRECTORY function
-;; also, notes so I don't forget: the :TYPE field is used _ONLY_ for the last extension of the
-;; filename, e.g. code.test.lisp has :NAME "code.test" and :TYPE "lisp".
-(defun find-module-path (name)
-  "Find a module given its name. Searches each directory in *MODULE-SEARCH-PATH* for a file named
- NAME.fn."
-  (some (lambda (dir)
-          (aif (directory (make-pathname :directory (list :relative dir)
-                                         :name name
-                                         :type "fn"))
-               (car it)
-               nil))
-        *module-search-path*))
-
-(defun module-copy-bindings (dest src)
-  "Copy all variables and macros from module SRC into DEST."
-  (with-slots (vars macros) dest
-    (maphash $(setf (gethash $0 vars) $1)
-             (fnmodule-vars src))
-    (maphash $(setf (gethash $0 macros) $1)
-             (fnmodule-macros src)))
-  dest)
-
-(defun init-import-module (sym &optional built-in-module)
-  "If sym name is found in the module search path, returns an empty module with the LOADED-FROM and
- NAME fields set. Otherwise returns null. If BUILT-IN-MODULE is an FNMODULE, then bindings from it
- are copied to any returned modules."
-  (aif (find-module-path (sym-name sym))
-       (let ((res (make-fnmodule :name sym
-                                 :loaded-from it)))
-         (when built-in-module
-           (module-copy-bindings res built-in-module))
-         res)
-       nil))
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
 ;;;; functions
 
 ;; function parameter object. Used to efficiently bind arguments.
@@ -400,7 +277,7 @@
   ;; functions. In the former, the code in the body is evaluated in an appropriate lexical
   ;; environment.
   (body nil :type (or list function) :read-only t)
-  ;; captured lexical environment
+  ;; captured lexical environment. This will be an environment object. See runtime.lisp
   (closure nil :read-only t))
 
 

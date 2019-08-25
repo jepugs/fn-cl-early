@@ -17,7 +17,7 @@
 
 (defpackage :fn.main
   (:documentation "Main routine for fn")
-  (:use :cl :fn.scanner :fn.ast :fn.parser :fn.util :fn.values :fn.eval)
+  (:use :cl :fn.scanner :fn.ast :fn.parser :fn.util :fn.values :fn.runtime :fn.eval :fn.boot)
   (:export :main))
 
 (in-package :fn.main)
@@ -25,7 +25,7 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defun fnshow (obj)
-  (fn.eval::call-fnmethod (fn.eval::get-var (fnintern "show"))
+  (fn.eval::call-fnmethod (module-var (current-module) (fnintern "show"))
                           (list obj)))
 
 (defun fnprintln (obj)
@@ -41,6 +41,8 @@
               (not (length< args 3)))
       (show-usage)
       (sb-ext:exit :code -1))
+    (setf *runtime* (init-runtime))
+    (setf *current-env* (init-env))
     (if (cdr args)
         (with-open-file (in (cadr args) :direction :input) 
           (handler-case (mapcar $(eval-ast $)
@@ -48,31 +50,29 @@
             (fn-error (x)
               (princ x)
               (terpri))))
-        (let* ((*interpreter* (init-interpreter))
-               (*current-env* (init-env nil)))
-          (loop (handler-case
-                    (progn
-                      (princ "> ")
-                      (finish-output)
+        (loop (handler-case
+                  (progn
+                    (princ "> ")
+                    (finish-output)
 
-                      (mapcar $(fnprintln (eval-ast $))
-                              (parse (scan-from-string (read-line)))))
+                    (mapcar $(fnprintln (eval-ast $))
+                            (parse (scan-from-string (read-line)))))
 
-                  ;; exit on SIGINT
-                  (sb-int::interactive-interrupt (x)
-                    (princ x)
-                    (terpri)
-                    (sb-ext:exit :code -1))
+                ;; exit on SIGINT
+                (sb-int::interactive-interrupt (x)
+                  (princ x)
+                  (terpri)
+                  (sb-ext:exit :code -1))
 
-                  ;; exit on end of file
-                  (end-of-file ()
-                    (terpri)
-                    (sb-ext:exit :code 0))
+                ;; exit on end of file
+                (end-of-file ()
+                  (terpri)
+                  (sb-ext:exit :code 0))
 
-                  ;; print out and continue on fn-error
-                  (fn-error (x)
-                    (princ x)
-                    (terpri))))))))
+                ;; print out and continue on fn-error
+                (fn-error (x)
+                  (princ x)
+                  (terpri)))))))
 
 (defun show-usage ()
   (format t "Usage: fn [script file]~%"))
