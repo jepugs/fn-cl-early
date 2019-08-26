@@ -35,7 +35,8 @@
    ;; built-in class fields
    :hd-sym :tl-sym :name-sym :fields-sym :constructor-sym :vars-sym :macros-sym
    ;; built-in methods
-   :call-sym :get-method-sym :set-method-sym :add-method-sym :mul-method-sym :sub-method-sym
+   :call-sym :get-method-sym :set-method-sym :show-sym :add-method-sym :mul-method-sym
+   :sub-method-sym
    ;; other built-in symbols
    :as-sym :amp-sym :hash-sym :wildcard-sym :built-in-module-sym
    ;; sequences
@@ -157,7 +158,7 @@
   (defparameter string-class-sym (symtab-intern "String" template-symtab))
 
   ;; built-in methods
-  (def-syms "call" "get-method" "set-method" "add-method" "mul-method" "sub-method"
+  (def-syms "call" "get-method" "set-method" "show" "add-method" "mul-method" "sub-method"
             "div-method"))
 
 (defun make-symtab ()
@@ -270,6 +271,8 @@
             (if vari (list vari)))))
 
 (defstruct (fnfun (:predicate fnfun?))
+  ;; string naming the function, where applicable
+  (name nil :read-only t)
   ;; parameter list
   (params nil :type (or param-list null) :read-only t)
   ;; either a list of fn code objects (see eval.lisp) or a function. In the latter case, the
@@ -308,42 +311,3 @@
 (defun set-impl (m types fun)
   (setf (gethash types (fnmethod-impls m)) fun))
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-;;;; pretty printing
-
-(defun show (x)
-  "Convert an fn object to a human-readable string."
-  (cond
-    ((empty? x) "[]")
-    ((fnnull? x) "null")
-    ((true? x) "true")
-    ((false? x) "false")
-    ((num? x) (format nil "~f" x))
-    ((fnlist? x)
-     (format nil "[~{~a~^ ~}]" (fnmapcar #'show x)))
-    ;; TODO: 
-    ((string? x) (concatenate 'string "\"" x "\""))
-    ((sym? x) (slot-value x 'name))
-    ((fnfun? x) "#<FUNCTION>")
-    ((fnclass? x) (concatenate 'string
-                               "#<CLASS:"
-                               (sym-name (fnclass-name x))
-                               ">"))
-    ((fnmodule? x)
-     (concatenate 'string
-                  "#<MODULE:"
-                  (sym-name (fnmodule-name x))
-                  ">"))
-    ((fnmethod? x) "#<METHOD>")
-    ((fnobj? x)
-     (format nil
-             "(~a ~{~a~^ ~})"
-             (sym-name (fnclass-name (fnobj-class x)))
-             (->> x
-               (fnobj-contents)
-               (ht->plist)
-               (group 2)
-               (reverse)
-               (mapcar $(show (cell-value (cadr $)))))))
-    (t "#<UNRECOGNIZED-FOREIGN-OBJECT>")))

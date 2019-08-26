@@ -18,7 +18,7 @@
 (defpackage :fn.eval
   (:documentation "expression evaluator")
   (:use :cl :fn.util :fn.ast :fn.runtime :fn.values :fn.code :fn.runtime)
-  (:export :eval-ast :eval-code :eval-file))
+  (:export :eval-ast :eval-code :eval-file :show :show-built-in))
 
 (in-package :fn.eval)
 
@@ -61,11 +61,63 @@
   (cond
     ((null body) (runtime-error "~aNo expressions in body"
                                 (if fun-name
-                                    (concatenate 'string fun-name ": ")
+                                    (strcat fun-name ": ")
                                     "")))
     ((length= body 1) (eval-code (car body)))
     (t (eval-code (car body))
        (eval-body (cdr body)))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;;;; pretty printing. needs to be in the evaluator so we can access the current runtime's show
+;;;; method
+
+(defun show (x)
+  "Converts fn objects to human readable strings. Automatically invokes the current runtime's show
+ method when available."
+  (let ((m (module-var (runtime-built-in-module *runtime*) show-sym)))
+    (if (fnmethod? m)
+        (call-fnmethod m (list x) (make-origin :filename "eval.lisp"))
+        (show-built-in x))))
+
+(defun show-built-in (x &optional (recursive-show #'show))
+  "Convert an fn object to a human-readable string."
+  (cond
+    ((empty? x) "[]")
+    ((fnnull? x) "null")
+    ((true? x) "true")
+    ((false? x) "false")
+    ((num? x) (format nil "~f" x))
+    ((string? x) (strcat "\"" x "\""))
+    ((fnlist? x)
+     (let ((*print-pprint-dispatch* (copy-pprint-dispatch)))
+             (set-pprint-dispatch 'string #'format)
+             (format nil
+                     "[~/pprint-fill/]"
+                     (fnmapcar recursive-show x)))
+     (format nil "[~{~a~^ ~}]" (fnmapcar recursive-show x)))
+    ((sym? x) (slot-value x 'name))
+    ((fnfun? x) (aif (slot-value x 'name)
+                     (strcat "#<Function:" it ">")
+                     nil))
+    ((fnclass? x) (strcat "#<Class:" (sym-name (fnclass-name x)) ">"))
+    ((fnmodule? x)
+     (strcat "#<Module:" (sym-name (fnmodule-name x)) ">"))
+    ((fnmethod? x)
+     (strcat "#<Method:" (sym-name (fnmethod-name x)) ">"))
+    ((fnobj? x)
+     (let ((*print-pprint-dispatch* (copy-pprint-dispatch)))
+             (set-pprint-dispatch 'string #'format)
+             (format nil
+                     "(~a ~/pprint-fill/)"
+                     (sym-name (fnclass-name (fnobj-class x)))
+                     (->> x
+                       fnobj-contents
+                       ht->plist
+                       (group 2)
+                       reverse
+                       (mapcar $(->> $ cadr cell-value (funcall recursive-show)))))))
+    (t "#<unrecognized-foreign-object>")))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -75,7 +127,7 @@
   (let* ((op (code-data (code-car c)))
          (args (code-cdr c)))
     (cond
-      ((eq op apply-sym) (eval-apply args))
+      ((eq op apply-sym) (eval-apply (code-origin c) args))
       ((eq op class-of-sym) (eval-class-of (car args)))
       ((eq op cond-sym) (eval-cond args))
       ((eq op def-sym) (eval-def (car args) (cdr args)))
@@ -139,10 +191,10 @@
 (defun params-alist (param-list args outer-env &optional op-name)
   "Create an ALIST matching parameter symbols to argument values. This function generates runtime
  errors if the provided argument list doesn't match the parameter list. As such it may be used for
- error checking."
+ error checking. OP-NAME is a string used for error reporting."
   (with-slots (pos keyword vari) param-list
     (let ((err-pre (if op-name
-                       (concatenate 'string op-name ": ")
+                       (strcat op-name ": ")
                        "")))
       (labels ((get-optional (p)
                  (if (cdr p)
@@ -203,7 +255,18 @@
                          nil))))
         (bind-positional nil pos args)))))
 
-(defun bind-params (param-list args outer-env &optional op-name)
+(defun extend-env/params (param-list args &key (parent *current-env*) call-frame op-name)
+  "Extend an evironment with the provided params. Optionally add a new frame to the call stack.
+ OP-NAME is used for error reporting."
+  (let* ((binding-alist (remove-if $(eq (car $) wildcard-sym)
+                                   (params-alist param-list args parent op-name)))
+         (*current-env* (extend-env (mapcar #'car binding-alist)
+                                    :parent parent
+                                    :call-frame call-frame)))
+    (mapc $(setf (env-var *current-env* (car $)) (cdr $)) binding-alist)
+    *current-env*))
+
+(defun bind-params (param-list args outer-env op-name)
   "Extend OUTER-ENV with variable bindings created by PARAM-LIST and ARGS."
   (let* ((binding-alist (remove-if $(eq (car $) wildcard-sym)
                                    (params-alist param-list args outer-env op-name)))
@@ -219,35 +282,48 @@
                                 :column column
                                 :macro (format nil "~a" (code-data (code-car c))))) 
            (args (mapcar #'code->fnvalue (code-cdr c))))
-      (fnvalue->code (call-fun macro-fun args) origin))))
+      (fnvalue->code (call-fun macro-fun args origin) origin))))
 
-(defun call-fun (fnfun args)
-  (with-slots (params body closure) fnfun
+(defun call-fun (fun args origin &optional obj)
+  "Call a function with the specified args. This automatically pushes a new call frame to the
+ created evaluation environment. ORIGIN should be the origin of the code that triggered the
+ call (for creating a call frame). If OBJ is supplied, it is used as the call frame object.
+ Otherwise, FUN is used."
+  (with-slots (params body closure) fun
     (if (functionp body)
         (funcall body args)
-        (let ((*current-env* (bind-params params args closure)))
+        (let* ((name (if obj
+                         (show obj)
+                         (show fun)))
+               (cf (make-call-frame :origin origin
+                                    :object (or obj fun)))
+               (*current-env* (extend-env/params params
+                                                 args
+                                                 :parent closure
+                                                 :call-frame cf
+                                                 :op-name name)))
           (eval-body body)))))
 
-(defun call-fnmethod (m args)
+(defun call-fnmethod (m args origin)
   (with-slots (name params dispatch-params default-impl) m
     (let* ((new-env (bind-params params args *current-env* name))
            (types (mapcar $(get-class-of (env-var new-env $))
                           dispatch-params)))
       (aif (get-impl m types)
-           (call-fun it args)
+           (call-fun it args origin m)
            (if default-impl
-               (call-fun default-impl args)
+               (call-fun default-impl args origin m)
                (runtime-error "~aMethod not implemented on types (~{~a~^ ~})."
                               (if name
-                                  (concatenate 'string name ": ")
+                                  (strcat name ": ")
                                   "")
                               (mapcar $(show (fnclass-name $)) types)))))))
 
-(defun call-obj (op args)
+(defun call-obj (op args origin)
   (cond
-    ((fnfun? op) (call-fun op args))
-    ((fnmethod? op) (call-fnmethod op args))
-    ((fnclass? op) (call-fun (fnclass-constructor op) args))
+    ((fnfun? op) (call-fun op args origin))
+    ((fnmethod? op) (call-fnmethod op args origin))
+    ((fnclass? op) (call-fun (fnclass-constructor op) args origin))
     (t (runtime-error "Operator is not a callable object"))))
 
 (defun eval-funcall (c)
@@ -255,21 +331,21 @@
   (let ((op (eval-code (code-car c)))
         (args (mapcar #'eval-code
                       (code-cdr c))))
-    (call-obj op args)))
+    (call-obj op args (code-origin c))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;;;; special operators
 
 ;;; apply
-(defun eval-apply (arg-exprs)
+(defun eval-apply (origin arg-exprs)
   (let ((op (eval-code (car arg-exprs)))
         (args (mapcar $(eval-code $) (cdr arg-exprs))))
     (unless (fnlist? (car (last args)))
       (runtime-error "apply: Last argument must be a list"))
     (let ((arg-list (reduce #'cons args :from-end t)))
       (rplacd (last arg-list) nil)
-      (call-obj op arg-list))))
+      (call-obj op arg-list origin))))
 
 ;;; class-of
 (defun eval-class-of (arg-code)
@@ -323,7 +399,8 @@
         v)))
 
 (defun eval-function-def (name params-code body)
-  (let ((fun (make-fnfun :params (code->param-list params-code)
+  (let ((fun (make-fnfun :name (sym-name name)
+                         :params (code->param-list params-code)
                          :body body
                          :closure *current-env*)))
     (safe-add-global name fun nil "def")
@@ -422,7 +499,7 @@
          (closure *current-env*))
     (make-fnfun :body
                 (lambda (args)
-                  (let ((env0 (bind-params params args closure)))
+                  (let ((env0 (bind-params params args closure "dollar-fn")))
                     ;; add the alternative symbol for the first arg
                     (if (>= max-id 0)
                         (setf (env-cell env0 (fnintern "$"))
@@ -608,6 +685,8 @@
       mod)))
 
 (defun eval-file (path)
+  "Evaluate a file in the current runtime and environment. Essentially equivalent
+ to pasting the source code from PATH directly into the current expression."
   (handler-case
       (with-open-file (in path :direction :input)
         (->> (fn.scanner:scan in path)

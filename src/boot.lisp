@@ -18,6 +18,7 @@
 (defpackage :fn.boot
   (:documentation "runtime bootstrapping")
   (:use :cl :fn.util :fn.values :fn.code :fn.runtime :fn.eval)
+  (:import-from :fn.eval :call-fnmethod)
   (:export :init-runtime))
 
 (in-package :fn.boot)
@@ -94,6 +95,14 @@
 (defun bool (x)
   (if x true false))
 
+(defparameter dummy-origin (make-origin :filename "boot.lisp"
+                                        :line 0
+                                        :column 0))
+
+(defun preboot-call-method (method args)
+  "Call an fnmethod with a dummy origin."
+  (call-fnmethod method args dummy-origin))
+
 (defun init-runtime-hook ()
   (with-syms ("x" "seq" "obj" "left" "right")
     ;; built-in classes
@@ -145,36 +154,25 @@
 
     ;; FIXME: make behavior of general object printing better (param backsubstitution?)
     (fn-defmethod "show" (obj-sym) (make-param-list :pos `((,obj-sym)))
-      ((bool-class-sym) (show (car args)))
-      ((class-class-sym) (show (car args)))
-      ((function-class-sym) (show (car args)))
+      ;; SHOW-BUILT-IN automatically calls SHOW, which looks up the correct show method. So why
+      ;; manually provide a recursive function? So that 
+      ((bool-class-sym) (show-built-in (car args) $(preboot-call-method method (list $))))
+      ((class-class-sym) (show-built-in (car args) $(preboot-call-method method (list $))))
+      ((function-class-sym) (show-built-in (car args) $(preboot-call-method method (list $))))
       ((list-class-sym)
        (let ((*print-pprint-dispatch* (copy-pprint-dispatch)))
              (set-pprint-dispatch 'string #'format)
              (format nil
                      "[~/pprint-fill/]"
-                     (fnmapcar (lambda (x)
-                                 (fn.eval::call-fnmethod method (list x)))
+                     (fnmapcar $(preboot-call-method method (list $))
                                (car args)))))
-      ((module-class-sym) (show (car args)))
-      ((method-class-sym) (show (car args)))
-      ((null-class-sym) (show (car args)))
-      ((num-class-sym) (show (car args)))
-      ((string-class-sym) (show (car args)))
+      ((module-class-sym) (show-built-in (car args) $(preboot-call-method method (list $))))
+      ((method-class-sym) (show-built-in (car args) $(preboot-call-method method (list $))))
+      ((null-class-sym) (show-built-in (car args) $(preboot-call-method method (list $))))
+      ((num-class-sym) (show-built-in (car args) $(preboot-call-method method (list $))))
+      ((string-class-sym) (show-built-in (car args) $(preboot-call-method method (list $))))
       ;; default object printer
-      (() (let ((*print-pprint-dispatch* (copy-pprint-dispatch)))
-             (set-pprint-dispatch 'string #'format)
-             (format nil
-                     "(~a ~/pprint-fill/)"
-                     (sym-name (fnclass-name (fnobj-class (car args))))
-                     (->> (car args)
-                       (fnobj-contents)
-                       (ht->plist)
-                       (group 2)
-                       (reverse)
-                       (mapcar $(fn.eval::call-fnmethod
-                                 method
-                                 (list (cell-value (cadr $))))))))))
+      (() (show-built-in (car args) $(preboot-call-method method (list $)))))
 
     (fn-defun "gensym" (= 0)
       (fngensym))
@@ -215,10 +213,10 @@
           false))
 
     (fn-defun "print" (= 1)
-      (princ (fn.eval::call-fnmethod (env-var *current-env* (fnintern "show")) args))
+      (princ (preboot-call-method (env-var *current-env* (fnintern "show")) args))
       fnnull)
     (fn-defun "println" (= 1)
-      (princ (fn.eval::call-fnmethod (env-var *current-env* (fnintern "show")) args))
+      (princ (preboot-call-method (env-var *current-env* (fnintern "show")) args))
       (terpri)
       fnnull)
     (fn-defun "load" (= 1)

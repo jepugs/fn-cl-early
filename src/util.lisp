@@ -28,7 +28,7 @@
    ;; control-flow macros
    :aif :it :rlambda :recur :-> :->> :->as
    ;; misc functionality
-   :defconstant-1 :symb :quoted-p :name-eq :macroexpand-all :with-gensyms :xor
+   :defconstant-1 :symb :quoted-p :name-eq :macroexpand-all :with-gensyms :xor :strcat
    ;; error handling
    :fn-error :origin :make-origin :origin-filename :origin-line :origin-column :filename
    :line :column :macro :origin->string  :message :module))
@@ -344,6 +344,10 @@ contents of the table."
   "Like DEFCONSTANT but will not redefine a value on multiple successive calls."
   `(unless (boundp ',name)
      (defconstant ,name ,value)))
+
+(defun strcat (&rest strings)
+  "(CONCATENATE 'STRING) but shorter"
+  (apply #'concatenate 'string strings))
 
 (defun xor (a b)
   (or (and a (not b))

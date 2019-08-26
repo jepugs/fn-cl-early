@@ -27,7 +27,7 @@
    :env :make-env :env-table :env-module :env-call-stack :env-parent
    ;; fnmodule struct
    :fnmodule :make-fnmodule :fnmodule? :fnmodule-name :fnmodule-filename :fnmodule-vars
-   :fnmodule-get-vars
+   :fnmodule-macros
    ;; getting and setting vars/macros
    :module-cell :module-var :module-macro :env-cell :env-var :env-macro :env-class
    :module-import-syms
@@ -157,10 +157,9 @@
            (gethash (sym-id sym) (fnmodule-vars (env-module env))))))
 
 (defsetf env-cell (env sym) (value)
-  (with-gensyms (cell)
-    `(setf (gethash (sym-id ,sym)
-                    (env-table ,env))
-           ,value)))
+  `(setf (gethash (sym-id ,sym)
+                  (env-table ,env))
+         ,value))
 
 (defun env-var (env sym)
   "Get the value of a variable. Returns NIL if there is no such variable."
@@ -220,13 +219,16 @@
   ;; origin of the code object for the function call
   (origin nil :type origin :read-only t)
   ;; string describing the operator that made the call
-  (name "anonymous function" :type string :read-only t))
+  (object nil :read-only t))
 
 (defun show-stack-trace (call-stack &optional (max-depth 5))
   "Format a stack trace as a multi-line string."
   (format nil
           "~{     in call to ~a at ~a~^~%~}~a~%"
-          (take max-depth call-stack)
+          (mapcan $(list (show (call-frame-object $))
+                         (call-frame-origin $))
+                  (take max-depth call-stack))
+          ;; print ellipses if the call stack is too long
           (if (length< call-stack (+ max-depth 1))
               "..."
               "")))

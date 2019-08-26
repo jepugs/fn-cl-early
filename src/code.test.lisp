@@ -50,7 +50,6 @@
 (define-test (code-dotted-get? (str->code "(get x y)")) nil)
 (define-test (code-dotted-get? (str->code "(get x.y 'z)")) t)
 (define-test (code-dotted-get? (str->code "(get x.y z)")) nil)
-(define-test (dotted-get-root (str->code "(get _.y z)")) wildcard-sym)
 
 (define-error-test (validate-code (str->code "(defvar x)"))
     :message "wrong number of arguments for defvar")
@@ -97,9 +96,9 @@
 
 ;; set
 (define-error-test (validate-code (str->code "(set x)"))
-    :message "wrong number of arguments for set")
+    :message "Wrong number of arguments for set")
 (define-error-test (validate-code (str->code "(set 2 3)"))
-    :message "malformed place in set")
+    :message "Malformed place in set")
 (define-error-test (validate-code (str->code "(set (get x 2) 3)"))
     :no-error t)
 
