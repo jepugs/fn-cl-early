@@ -56,7 +56,11 @@
 
 (eval-when (:load-toplevel :compile-toplevel :execute)
   (define-condition runtime-error (error)
-    ((message :initarg :message)))
+    ((message :initarg :message)
+     (call-stack :initarg :call-stack)))
+  (define-condition runtime-warning (warning)
+    ((message :initarg :message)
+     (call-stack :initarg :call-stack)))
 
   (defmacro handling-runtime-errors (code &body body)
     "Converts runtime errors to fn errors"
@@ -65,12 +69,15 @@
          (handler-case (progn ,@body)
            (runtime-error (,x)
              (fn-error (code-origin ,code-sym)
-                       "Runtime error: ~a"
-                       (slot-value ,x 'message)))))))
+                       (strcat "Runtime error: "
+                               (slot-value ,x 'message)
+                               (show-stack-trace (slot-value ,x 'call-stack)))))))))
 
   (defmacro runtime-error (format-string &rest format-args)
+    "Create a runtime error "
     `(error 'runtime-error
-            :message (format nil ,format-string ,@format-args)))
+            :message (format nil ,format-string ,@format-args)
+            :call-stack (env-call-stack *current-env*)))
 
   ;; one day this will be implemented
   (defmacro runtime-warning (format-string &rest format-args)
@@ -222,16 +229,16 @@
   (object nil :read-only t))
 
 (defun show-stack-trace (call-stack &optional (max-depth 5))
-  "Format a stack trace as a multi-line string."
+  "Format a stack trace as a multi-line string that starts with a newline."
   (format nil
-          "~{     in call to ~a at ~a~^~%~}~a~%"
+          "~{~%    in call to ~a at ~a~}~a"
           (mapcan $(list (show (call-frame-object $))
-                         (call-frame-origin $))
+                         (origin->string (call-frame-origin $)))
                   (take max-depth call-stack))
           ;; print ellipses if the call stack is too long
           (if (length< call-stack (+ max-depth 1))
-              "..."
-              "")))
+              ""
+              "...")))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -260,25 +267,20 @@
   (let ((st (runtime-symtab runtime)))
     (with-slots (fn.values::next-id) st
       (incf (slot-value st 'fn.values::next-id))
-      (fn.values::make-sym :name (format nil "GENSYM-~a" fn.values::next-id)
+      (fn.values::make-sym :name (format nil "#<GENSYM:~a>" fn.values::next-id)
                            :id fn.values::next-id))))
 
 (defun init-env (&optional module)
   "Initialize an environment object with an empty call stack."
   (make-env :module (or module (runtime-built-in-module *runtime*))))
 
-(defun extend-env (syms &key (parent *current-env*) (call-frame nil))
-  "Create a new environment as an extension of PARENT. The new environment gets its MODULE and
- CALL-STACK from PARENT. If CALL-FRAME is provided, it is added to the top of the CALL-STACK in the
- new env."
-  (let* ((table (make-hash-table :size (min (ceiling (* 1.5 (length syms))) 8)))
-         (module (env-module parent))
-         (call-stack (if call-frame
-                         (env-call-stack parent)
-                         (cons call-frame (env-call-stack parent))))
+(defun extend-env (syms &key (parent *current-env*) call-stack module)
+  "Create a new environment as an extension of PARENT. The MODULE and CALL-STACK are inherited from
+ the parent by default, but may be specified manually via the respective keyword arguments."
+  (let* ((table (make-hash-table))
          (res (make-env :table table
-                        :module module
-                        :call-stack call-stack
+                        :module (or module (env-module parent))
+                        :call-stack (or call-stack (env-call-stack parent))
                         :parent parent)))
     (mapc $(setf (gethash (sym-id $) table) (make-cell :mutable t)) syms)
     res))

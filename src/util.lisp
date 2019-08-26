@@ -21,7 +21,7 @@
   (:export
    ;; List/sequence functions
    :group :take :drop :split :take-while :drop-while :split-when :split-at :flatten :interleave
-   :length< :length= :set-equal
+   :length< :length= :lines :set-equal
    ;; hash-table functions
    :make-ht :make-eq-ht :ht-keys :ht-has-key :ht-values :ht->plist :ht-conc :ht-append :ht-del-keys
    :copy-ht
@@ -183,6 +183,13 @@
       (cond ((zerop n) (null lst))
             ((null lst) nil)
             (t (recur (- n 1) (cdr lst))))))
+
+(defun lines (str)
+  "Get the lines of a string"
+  (with-input-from-string (in str)
+    (loop for x = (read-line in nil nil)
+       while x
+       collect x)))
 
 (defun set-equal (lst0 lst1)
   "Tell if two lists contain the same elements"
@@ -394,7 +401,8 @@ contents of the table."
       (princ (origin->string origin))
       (princ ":")
       (terpri)
-      (princ "    ")
+      ;; indent two spaces for messages
+      (princ "  ")
       (princ message)
       (finish-output))))
 

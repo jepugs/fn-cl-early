@@ -80,8 +80,9 @@
         (call-fnmethod m (list x) (make-origin :filename "eval.lisp"))
         (show-built-in x))))
 
-(defun show-built-in (x &optional (recursive-show #'show))
-  "Convert an fn object to a human-readable string."
+(defun show-built-in (x &optional (recursive-show #'show-built-in))
+  "Convert an fn object to a human-readable string. This version of the function doesn't depend on
+ the current *RUNTIME* at all (unless the RECURSIVE-SHOW function does)."
   (cond
     ((empty? x) "[]")
     ((fnnull? x) "null")
@@ -91,15 +92,15 @@
     ((string? x) (strcat "\"" x "\""))
     ((fnlist? x)
      (let ((*print-pprint-dispatch* (copy-pprint-dispatch)))
-             (set-pprint-dispatch 'string #'format)
-             (format nil
-                     "[~/pprint-fill/]"
-                     (fnmapcar recursive-show x)))
+       (set-pprint-dispatch 'string #'format)
+       (format nil
+               "[~/pprint-fill/]"
+               (fnmapcar recursive-show x)))
      (format nil "[~{~a~^ ~}]" (fnmapcar recursive-show x)))
     ((sym? x) (slot-value x 'name))
     ((fnfun? x) (aif (slot-value x 'name)
-                     (strcat "#<Function:" it ">")
-                     nil))
+                     (strcat "#<Function:" (sym-name it) ">")
+                     (strcat "#<Function>")))
     ((fnclass? x) (strcat "#<Class:" (sym-name (fnclass-name x)) ">"))
     ((fnmodule? x)
      (strcat "#<Module:" (sym-name (fnmodule-name x)) ">"))
@@ -255,16 +256,20 @@
                          nil))))
         (bind-positional nil pos args)))))
 
-(defun extend-env/params (param-list args &key (parent *current-env*) call-frame op-name)
+(defun extend-env/params (param-list args &key (parent *current-env*) call-stack op-name)
   "Extend an evironment with the provided params. Optionally add a new frame to the call stack.
- OP-NAME is used for error reporting."
-  (let* ((binding-alist (remove-if $(eq (car $) wildcard-sym)
-                                   (params-alist param-list args parent op-name)))
-         (*current-env* (extend-env (mapcar #'car binding-alist)
-                                    :parent parent
-                                    :call-frame call-frame)))
-    (mapc $(setf (env-var *current-env* (car $)) (cdr $)) binding-alist)
-    *current-env*))
+ OP-NAME is used for error reporting. Note: CALL-STACK is taken from *CURRENT-ENV* regardless of
+ what PARENT is. PARAM-LIST may be NIL, in which case no symbols will be added to the new
+ environment's table."
+  (if param-list
+      (let* ((binding-alist (remove-if $(eq (car $) wildcard-sym)
+                                       (params-alist param-list args parent op-name)))
+             (*current-env* (extend-env (mapcar #'car binding-alist)
+                                        :parent parent
+                                        :call-stack call-stack)))
+        (mapc $(setf (env-var *current-env* (car $)) (cdr $)) binding-alist)
+        *current-env*)
+      (extend-env nil)))
 
 (defun bind-params (param-list args outer-env op-name)
   "Extend OUTER-ENV with variable bindings created by PARAM-LIST and ARGS."
@@ -290,23 +295,23 @@
  call (for creating a call frame). If OBJ is supplied, it is used as the call frame object.
  Otherwise, FUN is used."
   (with-slots (params body closure) fun
-    (if (functionp body)
-        (funcall body args)
-        (let* ((name (if obj
-                         (show obj)
-                         (show fun)))
-               (cf (make-call-frame :origin origin
-                                    :object (or obj fun)))
-               (*current-env* (extend-env/params params
-                                                 args
-                                                 :parent closure
-                                                 :call-frame cf
-                                                 :op-name name)))
+    (let* ((name (if obj
+                     (show-built-in obj)
+                     (show-built-in fun)))
+           (cf (make-call-frame :origin origin
+                                :object (or obj fun)))
+           (*current-env* (extend-env/params params
+                                             args
+                                             :parent closure
+                                             :call-stack (cons cf (env-call-stack *current-env*))
+                                             :op-name name)))
+      (if (functionp body)
+          (funcall body args)
           (eval-body body)))))
 
 (defun call-fnmethod (m args origin)
   (with-slots (name params dispatch-params default-impl) m
-    (let* ((new-env (bind-params params args *current-env* name))
+    (let* ((new-env (bind-params params args *current-env* (if name (sym-name name))))
            (types (mapcar $(get-class-of (env-var new-env $))
                           dispatch-params)))
       (aif (get-impl m types)
@@ -315,7 +320,7 @@
                (call-fun default-impl args origin m)
                (runtime-error "~aMethod not implemented on types (~{~a~^ ~})."
                               (if name
-                                  (strcat name ": ")
+                                  (strcat (sym-name name) ": ")
                                   "")
                               (mapcar $(show (fnclass-name $)) types)))))))
 
@@ -343,8 +348,7 @@
         (args (mapcar $(eval-code $) (cdr arg-exprs))))
     (unless (fnlist? (car (last args)))
       (runtime-error "apply: Last argument must be a list"))
-    (let ((arg-list (reduce #'cons args :from-end t)))
-      (rplacd (last arg-list) nil)
+    (let ((arg-list (fnlist->list (reduce #'cons args :from-end t))))
       (call-obj op arg-list origin))))
 
 ;;; class-of
@@ -399,7 +403,7 @@
         v)))
 
 (defun eval-function-def (name params-code body)
-  (let ((fun (make-fnfun :name (sym-name name)
+  (let ((fun (make-fnfun :name name
                          :params (code->param-list params-code)
                          :body body
                          :closure *current-env*)))
@@ -431,6 +435,7 @@
                                         :body body
                                         :closure *current-env*))))))
 
+
 ;;; defclass
 (defun eval-defclass (name params-code)
   (let* ((params (code->param-list params-code))
@@ -448,12 +453,14 @@
                                    :contents (env-table (bind-params params
                                                                      $
                                                                      *current-env*
-                                                                     "defclass"))))))
+                                                                     "defclass")))
+                :closure *current-env*)))
 
 ;;; defmacro
 (defun eval-defmacro (name params-code body-code)
   (safe-add-global-macro name
-                         (make-fnfun :params (code->param-list params-code)
+                         (make-fnfun :name name
+                                     :params (code->param-list params-code)
                                      :body body-code
                                      :closure *current-env*)
                          "defmacro")
@@ -462,7 +469,7 @@
 ;;; defmethod
 (defun eval-defmethod (name dispatch-params params)
   "Create a new method."
-  (let ((m (make-fnmethod :name (sym-name name)
+  (let ((m (make-fnmethod :name name
                           :params (code->param-list params)
                           :dispatch-params (mapcar #'code-data dispatch-params))))
     (safe-add-global name m nil "defmethod")
@@ -495,16 +502,18 @@
                                nil)))
          (params (make-param-list :pos pos
                                   :vari (and has-vari
-                                             (fnintern "$&"))))
-         (closure *current-env*))
-    (make-fnfun :body
+                                             (fnintern "$&")))))
+    (make-fnfun :params params
+                :body
                 (lambda (args)
-                  (let ((env0 (bind-params params args closure "dollar-fn")))
-                    ;; add the alternative symbol for the first arg
-                    (if (>= max-id 0)
-                        (setf (env-cell env0 (fnintern "$"))
-                              (env-cell env0 (fnintern "$0"))))
-                    (eval-code expr env0))))))
+                  ;; we don't actually need to do anything with ARGS. Because the function object
+                  ;; has non-NIL PARAMS, the arguments are already stored in *CURRENT-ENV*.
+                  (declare (ignore args))
+                  (if (>= max-id 0)
+                      (setf (env-cell *current-env* (fnintern "$"))
+                            (env-cell *current-env* (fnintern "$0"))))
+                  (eval-code expr))
+                :closure *current-env*)))
 
 (defun dollar-id-string? (str)
   ;; we have to ensure there are no superfluous leading 0's b/c then there wouldn't be one unique
@@ -594,7 +603,7 @@
     ((string? obj) (fnstring-get obj key))
     ;; TODO: add check for get-method implementations
     ((fnobj? obj) (fnobj-get-field obj key))
-    (t (runtime-error "Object ~s has no gettable fields or indices" (show obj)))))
+    (t (runtime-error "get: Object ~s has no gettable fields or indices" (show obj)))))
 
 (defun fnmodule-get (obj key)
   "Gets a variable from a module by name"

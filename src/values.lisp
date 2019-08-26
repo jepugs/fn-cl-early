@@ -45,7 +45,8 @@
    ;; functions
    :param-list :make-param-list :pos :keyword :vari :param-list-pos :param-list-keyword
    :param-list-vari :param-list-vars :param-list-eqv
-   :fnfun :params :body :env :closure :param-list-syms :make-fnfun :fnfun?
+   :fnfun :params :body :env :closure :param-list-syms :make-fnfun :fnfun? :fnfun-name
+   :fnfun-params :fnfun-body :fnfun-closure
    ;; general objects
    :fnclass :fields :constructor :fnclass-name :make-fnclass :fnclass-fields :fnclass-constructor :fnclass?
    :fnobj :class :contents :make-fnobj :fnobj-class :fnobj-contents :fnobj?
@@ -271,8 +272,8 @@
             (if vari (list vari)))))
 
 (defstruct (fnfun (:predicate fnfun?))
-  ;; string naming the function, where applicable
-  (name nil :read-only t)
+  ;; sym naming the function, where applicable
+  (name nil :type (or sym null) :read-only t)
   ;; parameter list
   (params nil :type (or param-list null) :read-only t)
   ;; either a list of fn code objects (see eval.lisp) or a function. In the latter case, the

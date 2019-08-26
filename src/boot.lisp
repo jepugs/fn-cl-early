@@ -39,30 +39,36 @@
   (with-gensyms (dispatch-params-var params-var)
     `(let* ((,dispatch-params-var (list ,@dispatch-params))
             (,params-var ,params)
-            (method (make-fnmethod :name ,name
+            (method (make-fnmethod :name (fnintern ,name)
                                    :params ,params-var
                                    :dispatch-params ,dispatch-params-var)))
        (safe-add-global (fnintern ,name) method nil "during bootstrapping: ")
        ,@(mapcar $(if (null (car $))
                       `(setf (slot-value method 'default-impl)
-                             (make-fnfun :body
+                             (make-fnfun :params ,params-var
+                                         :body
                                          (lambda (args)
+                                           (declare (ignorable args))
                                            ;; used to check parameters
                                            (fn.eval::params-alist ,params-var
                                                                   args
                                                                   *current-env*
                                                                   ,name)
-                                           ,@(cdr $))))
+                                           ,@(cdr $))
+                                         :closure *current-env*))
                       `(set-impl method
                                  (mapcar $(env-var *current-env* $) (list ,@(car $)))
-                                 (make-fnfun :body
+                                 (make-fnfun :params ,params-var
+                                             :body
                                              (lambda (args)
+                                               (declare (ignorable args))
                                                ;; used to check parameters
                                                (fn.eval::params-alist ,params-var
                                                                       args
                                                                       *current-env*
                                                                       ,name)
-                                               ,@(cdr $)))))
+                                               ,@(cdr $))
+                                             :closure *current-env*)))
                  impls))))
 
 (defun error-constructor (args)
@@ -75,7 +81,9 @@
        (safe-add-global ,sym-var
                         (make-fnclass :name ,sym-var
                                       :fields (list ,@fields)
-                                      :constructor (make-fnfun :body ,constructor))))))
+                                      :constructor
+                                      (make-fnfun :body ,constructor
+                                                  :closure *current-env*))))))
 
 (defun check-arglen (fun-name args op num)
   (case op
@@ -86,11 +94,30 @@
      (unless (length= args num)
        (runtime-error "~a: Wrong number of arguments" fun-name)))))
 
-(defmacro fn-defun (name (args-op args-num) &body body)
+(defun cl-syms->param-list (syms)
+  "Convert a list of Common Lisp symbols to an fn PARAM-LIST. Only (non-optional) positional
+ arguments and variadic arguments are supported."
+  (let* ((vari? (member '& syms))
+         (fn-syms (mapcar $(-> $ symbol-name fnintern) syms)))
+    (make-param-list :pos (if vari?
+                              (->> fn-syms
+                                reverse
+                                (drop 2)
+                                reverse
+                                (mapcar $(cons $ nil)))
+                              (mapcar $(cons $ nil) fn-syms))
+                     :vari (if vari?
+                               (car (last fn-syms))
+                               nil))))
+
+(defmacro fn-defun (name (&rest params) &body body)
   `(safe-add-global (fnintern ,name)
-                    (make-fnfun :body (lambda (args)
-                                        (check-arglen ,name args ',args-op ,args-num)
-                                        ,@body))))
+                    (make-fnfun :name (fnintern ,name)
+                                :params (cl-syms->param-list ',params)
+                                :body (lambda (args)
+                                        (declare (ignorable args))
+                                        ,@body)
+                                :closure *current-env*)))
 
 (defun bool (x)
   (if x true false))
@@ -174,52 +201,52 @@
       ;; default object printer
       (() (show-built-in (car args) $(preboot-call-method method (list $)))))
 
-    (fn-defun "gensym" (= 0)
+    (fn-defun "gensym" ()
       (fngensym))
 
-    (fn-defun "+" (>= 1)
+    (fn-defun "+" (arg0 & args)
       (unless (every #'num? args)
         (runtime-error "+: Arguments must be numbers"))
       (num (apply #'+ args)))
-    (fn-defun "-" (>= 1)
+    (fn-defun "-" (arg0 & args)
       (unless (every #'num? args)
         (runtime-error "-: Arguments must be numbers"))
       (num (apply #'- args)))
-    (fn-defun "/" (>= 1)
+    (fn-defun "/" (arg0 & args)
       (unless (every #'num? args)
         (runtime-error "/: Arguments must be numbers"))
       (num (apply #'/ args)))
-    (fn-defun "*" (>= 1)
+    (fn-defun "*" (arg0 & args)
       (unless (every #'num? args)
         (runtime-error "*: Arguments must be numbers"))
       (num (apply #'* args)))
-    (fn-defun "pow" (>= 1)
+    (fn-defun "pow" (arg0 & args)
       (unless (every #'num? args)
         (runtime-error "pow: Arguments must be numbers"))
       (num (expt (car args) (cadr args))))
 
-    (fn-defun ">" (>= 2)
+    (fn-defun ">" (arg0 arg1 & args)
       (bool (apply #'> args)))
-    (fn-defun "<" (>= 2)
+    (fn-defun "<" (arg0 arg1 & args)
       (bool (apply #'< args)))
-    (fn-defun ">=" (>= 2)
+    (fn-defun ">=" (arg0 arg1 & args)
       (bool (apply #'>= args)))
-    (fn-defun "<=" (>= 2)
+    (fn-defun "<=" (arg0 arg1 & args)
       (bool (apply #'<= args)))
 
-    (fn-defun "=" (= 2)
+    (fn-defun "=" (arg0 arg1)
       (if (equalp (car args) (cadr args))
           true
           false))
 
-    (fn-defun "print" (= 1)
+    (fn-defun "print" (x)
       (princ (preboot-call-method (env-var *current-env* (fnintern "show")) args))
       fnnull)
-    (fn-defun "println" (= 1)
+    (fn-defun "println" (x)
       (princ (preboot-call-method (env-var *current-env* (fnintern "show")) args))
       (terpri)
       fnnull)
-    (fn-defun "load" (= 1)
+    (fn-defun "load" (x)
       (unless (string? (car args))
         (runtime-error "load: Argument must be a string"))
       (with-open-file (in (car args) :direction :input)
@@ -229,9 +256,9 @@
                      (format t "load: Error encountered: ~a~%" x)))
                 ast)))
       fnnull)
-    (fn-defun "runtime-error" (= 1)
+    (fn-defun "runtime-error" (x)
       (runtime-error "~a" (show (car args))))
-    (fn-defun "exit" (>= 0)
+    (fn-defun "exit" (& args)
       (funcall #'sb-ext:exit
                :code (if args (floor (car args)) 0)))
 
