@@ -1022,11 +1022,114 @@ This should encompass all basic POSIX file functionality.
 This section is a bunch of garbage to help me remember things. (This is the clean garbage. The real
 garbage is in a local directory).
 
+If you're interested, the "proposals" below contain a lot of information about where I am/have been
+in the various thought processes involved in designing this language. Hot proposals are ones I'll
+probably incorporate into the language. "Explorations" are just stream-of-consciousness ramblings
+(I guess proposal are too, but those have a purpose).
+
+** Exploration: currying functions
+
+Generalized currying on the first n arguments of a function can be accomplished in fn:
+
+#+BEGIN_SRC fn
+(def (curry fun n)
+  "Curry fun over ths first n arguments."
+  (fn (& args)
+    (if (> (length args) n)
+        (apply fun args)
+        (curry $(apply fun (append args $&))
+               (- n (length args))))))
+
+(def plus (curry + 1))
+(plus 3 4)
+;; => 7
+(plus 3)
+;; => #<Function>
+(map (plus 3) [1 2 3])
+;; => [4 5 6]
+#+END_SRC
+
+I may be getting ahead of myself here, because there aren't any function options or decorators in fn
+yet, but one feature I used to like a lot was automatic currying. I'm no longer sold on the utility
+of this function, because the inclusion of ~$()~ in the language makes most uses of currying less
+painful, and it complicates function calling to an extent that probably doesn't warrant it. Manual
+currying might still make sense for certain functions (e.g. map, filter, etc). Here's some code
+comparing manual & automatic currying.
+
+#+BEGIN_SRC fn
+;;; currying calls
+(fun x)           ; automatic currying
+$(fun x $)        ; $ currying to create a function of one arg   (+3 chars)
+$(fun x $0 $1)    ; $ currying to create a function of two args  (+7 chars)
+$(apply fun x $&) ; $ currying to create a function of many args (+10 chars)
+(curry fun x)     ; manual curry function (+6 chars)
+
+;;; defining curried functions
+;; manual currying on the first n=2 arguments
+(def (fun & args)
+  (if (< (length args) 2) ; 2 is number of args to curry on
+      $(apply fun (cat args $&))
+      (apply execute-fun args)))
+;; manual currying using a curry function
+(def (fun & args)
+  (if (< (length args) 2)
+      (apply curry fun args)
+      (apply execute-fun args)))
+;; (potential) automatic currying solution using decorator option
+(def (fun & args)
+  (options 'decorate (auto-curry 2))
+  (apply execute-fun args))
+;; this also allows explicit parameter names, which actually is safer
+(def (fun x y z)
+  (options 'decorate (auto-curry 2))
+  (execute-fun x t z))
+#+END_SRC
+
+*Notes*:
+- w/r/t calls:
+  - There's a modest 3-character overhead incurred when using $ to curry a function to its
+    2nd-to-last argument. This is by far the most common use case in my opinion.
+  - With a curry function, the maximum overhead is 6 characters compared to any currying operation
+    w/s/e
+  - $ syntax is more flexible and isn't so sensitive to the order of the arguments.
+
+** (Hot) Proposal: built-in anaphora
+
+Anaphoric macros are so dang useful. I use AIF all over the place in my code. With that in mind,
+here's a proposal: what if the built-in forms were anaphoric? The canonical name for test results is
+IT in common lisp, for functions it's SELF, and for lets it's THIS. I'm not too concerned about
+anaphoric let, but I could easily let ~if~ and ~cond~ to bind ~it~ and let ~fn~ and ~dollar-fn~ bind ~self~.
+This would also make a ~loop~ macro entirely unnecessary:
+
+#+BEGIN_SRC fn
+;; proposed loop macro, used to reverse a list
+(loop (acc src) ([] lst)
+  (if (empty? src)
+      acc
+      (recur (cons (head src) acc) (tail src))))
+
+;; equivalent expression with anaphoric fn
+((fn (acc src)
+   (if (empty? src)
+       acc
+       (self (cons (head src) acc) (tail src))))
+ [] lst)
+#+END_SRC
+
+Adding the ~self~ binding to functions seems like a no-brainer. Adding ~it~ to ~if~, ~case~, and ~cond~ seems
+like a good idea, too.
+
+In the interest of preventing name collisions, the names ~$it~ and ~$self~ might probably be better.
+This could also work as a convention: variables introduced by macro expansions should start with $.
+
+When we start caring about performance, it's probably worth walking the code to see whether the
+anaphoric variables should be bound at all.
+
 ** Proposal: change set name to set!
 
 The Scheme/Racket naming convention for stateful functions is pretty good.
 
-** Proposal: object internal representations
+** Exploration: object internal representations
 
 There are several different representations of objects in fn.
 
@@ -1051,7 +1154,7 @@ Suppose you could declare the internal representation of a class:
   (get (internals p) str))
 #+END_SRC
 
-** Proposal: forced sets of immutable objects
+** Exploration: forced sets of immutable objects
 
 We could add an operator, called set!, set-forcefully, force-set, fset, or something like that. This
 operator could mutate lists, tries, objects, etc that are normally immutable. (Currently, I like
