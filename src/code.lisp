@@ -346,7 +346,7 @@
 (defun validate-cond (o args)
   (check-arg-length>= o args 1 "cond")
   (unless (evenp (length args))
-    (fn-error o "cond: Odd number of arguments to cond"))
+    (fn-error o "cond: Odd number of arguments"))
   (validate-exprs args))
 
 (defun valid-place-name? (x)
