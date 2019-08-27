@@ -99,7 +99,7 @@
       (unquot $(ast-unquot (slot-value (cadr $) 'origin) (cadr $)))
       (unquot-splice $(ast-unquot-splice (slot-value (cadr $) 'origin) (cadr $)))
 
-      (dollar $(let ((l (token-origin (car (last $)))))
+      (dollar $(let ((l (slot-value (car (last $)) 'origin)))
                  (ast-dollar
                   l
                   (case (token-kind (car $))
