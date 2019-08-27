@@ -18,7 +18,7 @@
 (defpackage :fn.test
   (:documentation "unit testing framework for fn")
   (:use :cl :fn.util)
-  (:export :define-test-suite :define-test :define-error-test :run-tests))
+  (:export :define-test-suite :define-test :define-test/eq :define-error-test :run-tests))
 
 (in-package :fn.test)
 
@@ -32,15 +32,15 @@
 (defstruct unit-test
   (expr nil :read-only t)
   (thunk nil :type function :read-only t)
-  (result-thunk nil :read-only t)
-  ;; this test is used to compare the result of the thunk with the
-  (test #'equal :type function :read-only t))
+  ;; function used to check result of the thunk
+  (test-fun #'equal :type function :read-only t))
 
 (defun run-test (unit-test)
-  (with-slots (expr thunk result-thunk test) unit-test
+  "Run a test and write results to *STANDARD-OUTPUT*"
+  (with-slots (expr thunk test-fun) unit-test
     (handler-case 
         (let ((res (funcall thunk)))
-          (if (funcall test (funcall result-thunk) res)
+          (if (funcall test-fun res)
               (progn (format t "[pass] ~s~%" expr)
                      t)
               (progn (format t "[FAIL] ~s~%" expr)
@@ -54,42 +54,69 @@
      (defparameter ,name (make-test-suite :name ',name))
      (setq *current-test-suite* ,name)))
 
-(defmacro define-test (expression expected-value &key (test #'equal) (suite *current-test-suite*))
-  "Define a unit test and add it to SUITE. EXPRESSION should be a Common Lisp expression to evaluate
- and EXPECTED-VALUE is the output indicating a successful test. TEST is the function used to check
- this. Setting TEST to #'VALUES will cause the test to pass unless an FN-ERROR is thrown. Other
- types of error conditions are not handled and will result in the test program crashing."
+(defmacro define-test (expression &optional test-fun)
+  "Define a unit test and add it to *CURRENT-TEST-SUITE*. EXPRESSION is the code to evaluate when
+ the test is run. TEST-FUN is a function that is called on the result to determine whether the test
+ passed. A NIL return value indicates failure and anything else indicate success.
+
+ If TEST-FUN is not provided, then the test will succeed unless it causes an error.
+
+ The current test suite may be run with (RUN-TESTS)."
   `(push (make-unit-test :expr ',expression
                          :thunk (lambda () ,expression)
-                         :result-thunk (lambda () ,expected-value)
-                         :test ,test)
-         (test-suite-tests ,suite)))
+                         :test-fun ,(if test-fun
+                                        test-fun
+                                        (lambda (x)
+                                          (declare (ignore x))
+                                          t)))
+         (test-suite-tests *current-test-suite*)))
 
-(defun verify-error (thunk &key message origin no-error)
+(defmacro define-test/eq (expression expected-result)
+  "Define a unit test that checks whether the result EXPRESSION is equal to that of EXPECTED-RESULT 
+ using EQUALP.
+
+ Neither EXPRESSION nor EXPECTED-RESULT is evaluated until the test is executed, so the code in
+ EXPECTED-RESULT may rely on side-effects caused by EXPRESSION."
+  (with-gensyms (res)
+    `(push (make-unit-test :expr ',expression
+                           :thunk (lambda () ,expression)
+                           :test-fun (lambda (,res)
+                                       (equalp ,res ,expected-result)))
+           (test-suite-tests *current-test-suite*))))
+
+(defun verify-error (thunk &key message (num-lines 1) origin no-error)
   "Perform a unit test on an expression that should throw an FN-ERROR. If MESSAGE or ORIGIN are
  supplied, the respective slots in the error must be EQUAL to them. If neither is specified the test
  will pass on an FN-ERROR regardless of its slot values. If no error is emitted, the test will
- always fail."
+ always fail. Only the first NUM-LINES lines of the message are checked. NUM-LINES has a default
+ value of 1 so stack traces from runtime errors are ignored. Setting it to a non-numeric value
+ allows "
   (handler-case (progn (funcall thunk)
                        no-error)
     ;; get the fn error and check its slots
     (fn-error (x)
-      (and (not no-error)
-           (if message
-                 (string= (slot-value x 'message) message)
-                 t)
-           (if origin
-               (equal (slot-value x 'origin) origin)
-               t)))))
+      (let* ((actual-message (slot-value x 'message)) 
+             (message-test (if message
+                               (if (numberp num-lines)
+                                   (equalp (take num-lines (lines message))
+                                           (take num-lines (lines actual-message)))
+                                   (string= actual-message message))
+                               t)))
+        (and (not no-error)
+             message-test
+             (if origin
+                 (equal (slot-value x 'origin) origin)
+                 t))))))
 
-(defmacro define-error-test (expression &key message origin no-error)
+(defmacro define-error-test (expression &key message (num-lines 1) origin no-error)
+  "Add an error test to the current test suite"
   `(define-test
        (verify-error (lambda () ,expression)
                      ,@(if message `(:message ,message) nil)
                      ,@(if origin `(:origin ,origin) nil)
+                     ,@(if num-lines `(:num-lines ,num-lines))
                      :no-error ,no-error)
-       t
-     :test #'eq))
+       #'values))
 
 (defun run-tests (&optional (test-suite *current-test-suite*))
   (format t
