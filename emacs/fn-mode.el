@@ -30,6 +30,10 @@
     ("fn" 4 . 2)
     ("let" 4 . 2)))
 
+;; this matches any kind of symbol, including those with escaped characters.
+(defvar symbol-regexp
+  "\\(\\(?:\\\\.\\|\\$\\)*\\_<\\(?:\\s_\\|[[:word:]$]\\|\\\\.\\)+\\_>\\)")
+
 (defvar fn-font-lock-keywords
   (list
    ;; definers
@@ -44,8 +48,8 @@
           (regexp-opt '("def" "defvar" "defvar*") t)
           ;; whitespace
           "\\_>[[:space:]]+"
-          ;; symbol
-          "\\_<\\(\\(?:\\s_\\|\\w\\)+\\)\\_>")
+          ;; symbol (including things with \ and $
+          symbol-regexp)
          '(2 font-lock-variable-name-face))
    ;; function, class, & macro definitions
    (list (concat
@@ -54,7 +58,7 @@
           ;; whitespace and opening paren
           "\\_>[[:space:]]+("
           ;; symbol
-          "\\_<\\(\\(?:\\s_\\|\\w\\)+\\)\\_>")
+          symbol-regexp)
          '(2 font-lock-function-name-face))
    ;; method definition
    (list (concat
@@ -63,7 +67,7 @@
           ;; whitespace and TWO opening parens
           "\\_>[[:space:]]+(("
           ;; symbol
-          "\\_<\\(\\(?:\\s_\\|\\w\\)+\\)\\_>")
+          symbol-regexp)
          '(2 font-lock-function-name-face))
    ;; other special operators
    (list (concat "("
@@ -76,10 +80,13 @@
                  "\\_>")
          'font-lock-constant-face)
    ;; quoted symbols
-   (list "\\('\\(?:\\sw\\|\\s_\\)+\\_>\\)"
+   (list (concat "\\('" 
+                 symbol-regexp
+                 "\\)")
          1 'font-lock-constant-face)
-   ;; Symbols starting with uppercase characters (presumed types/constructors)
-   (list "\\_<\\([[:upper:]]\\(?:\\sw\\|\\s_\\)*\\)\\_>"
+   ;; Class names. Class names start with uppercase characters, are multiple characters long, and
+   ;; don't contain ^, _, $, |, : or any escaped characters
+   (list "\\(?:\\_<\\|[^\\]\\.\\)\\([[:upper:]]\\(?:[[:word:]-?]\\)+\\)\\_>"
          1 'font-lock-type-face)))
 
 (defvar fn-mode-syntax-table
@@ -95,16 +102,27 @@
     (modify-syntax-entry ?7 "w" stab)
     (modify-syntax-entry ?8 "w" stab)
     (modify-syntax-entry ?9 "w" stab)
-    ;; symbol characters
+    ;; non-alphanumeric symbol constituents characters. Note that some characters use word syntax
+    ;; while others use symbol syntax. Symbol syntax is reserved for characters that act as word
+    ;; delimiters. Aside from . and -, these characters should rarely be used in variable names.
+    (modify-syntax-entry ?! "w" stab)
+    (modify-syntax-entry ?@ "w" stab)
+    (modify-syntax-entry ?\# "w" stab)
+    (modify-syntax-entry ?% "w" stab)
+    (modify-syntax-entry ?^ "_" stab)
+    (modify-syntax-entry ?& "w" stab)
+    (modify-syntax-entry ?* "w" stab)
     (modify-syntax-entry ?- "_" stab)
     (modify-syntax-entry ?_ "_" stab)
-    (modify-syntax-entry ?@ "w" stab)
+    (modify-syntax-entry ?+ "w" stab)
+    (modify-syntax-entry ?= "w" stab)    
+    (modify-syntax-entry ?| "_" stab)
     (modify-syntax-entry ?: "_" stab)
-    (modify-syntax-entry ?! "w" stab)
-    (modify-syntax-entry ?* "w" stab)
+    (modify-syntax-entry ?< "w" stab)
+    ;; dot syntax is treated as a single symbol to make navigating expressions simpler
     (modify-syntax-entry ?. "_" stab)
-    (modify-syntax-entry ?\# "w" stab)
-    (modify-syntax-entry ?? "_" stab)
+    (modify-syntax-entry ?> "w" stab)
+    (modify-syntax-entry ?? "w" stab)
     ;; delimiters
     (modify-syntax-entry ?\( "()" stab)
     (modify-syntax-entry ?\) ")(" stab)
