@@ -49,11 +49,6 @@
                                          :body
                                          (lambda (args)
                                            (declare (ignorable args))
-                                           ;; used to check parameters
-                                           (fn.eval::params-alist ,params-var
-                                                                  args
-                                                                  *current-env*
-                                                                  ,name)
                                            ,@(cdr $))
                                          :closure *current-env*))
                       `(set-impl method
@@ -62,11 +57,6 @@
                                              :body
                                              (lambda (args)
                                                (declare (ignorable args))
-                                               ;; used to check parameters
-                                               (fn.eval::params-alist ,params-var
-                                                                      args
-                                                                      *current-env*
-                                                                      ,name)
                                                ,@(cdr $))
                                              :closure *current-env*)))
                  impls))))

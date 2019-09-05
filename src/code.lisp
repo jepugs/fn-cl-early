@@ -341,7 +341,10 @@
 
 (defun validate-case (o args)
   (declare (ignorable args))
-  (fn-error o "case: case is not implemented :("))
+  (check-arg-length>= o args 1 "case")
+  (unless (oddp (length args))
+    (fn-error o "case: Odd number of pattern/result arguments"))
+  (validate-exprs (mapcar #'cadr (group 2 (cdr args)))))
 
 (defun validate-cond (o args)
   (check-arg-length>= o args 1 "cond")

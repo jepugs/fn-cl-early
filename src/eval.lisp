@@ -129,6 +129,7 @@
          (args (code-cdr c)))
     (cond
       ((eq op apply-sym) (eval-apply (code-origin c) args))
+      ((eq op case-sym) (eval-case (car args) (cdr args)))
       ((eq op class-of-sym) (eval-class-of (car args)))
       ((eq op cond-sym) (eval-cond args))
       ((eq op def-sym) (eval-def (car args) (cdr args)))
@@ -189,72 +190,140 @@
            (eval-code code))
          (eval-funcall c))))
 
-(defun params-alist (param-list args outer-env &optional op-name)
-  "Create an ALIST matching parameter symbols to argument values. This function generates runtime
- errors if the provided argument list doesn't match the parameter list. As such it may be used for
- error checking. OP-NAME is a string used for error reporting."
+(defun params-alist (param-list args &optional (eval-defaults t))
+  "Attempt to create an ALIST matching parameter symbols to values in a list. On failure, a
+ message (string) describing the error is returned. (NIL return value DOES NOT indicate failure).
+
+ If EVAL-DEFAULTS is non-NIL, then the parameter list's default expressions will be evaluated for
+ missing optional parameters using *CURRENT-ENV* and *RUNTIME*. Otherwise, the function will fail
+ when any optional positional parameters are missing (keywords may still be omitted).
+
+ If EVAL-DEFAULTS is NIL, then missing keyword arguments are set to NIL. Otherwise, they are set to
+ their default expressions or if not default is specified FNNULL."
   (with-slots (pos keyword vari) param-list
-    (let ((err-pre (if op-name
-                       (strcat op-name ": ")
-                       "")))
-      (labels ((get-optional (p)
-                 (if (cdr p)
-                     (eval-code (cdr p) outer-env)
-                     (runtime-error "~aToo few arguments" err-pre)))
-               (bind-positional (acc params args)
-                 (cond
-                   ((null params)
-                    (if keyword
-                        (append acc (bind-keyword nil nil args))
-                        (append (bind-vari args) acc)))
-                   ((null args)
-                    (bind-positional (cons (cons (caar params)
-                                                 (get-optional (car params)))
+    (labels ((get-optional (p)
+               (and (cdr p) (eval-code (cdr p))))
+             (bind-positional (acc params args)
+               (cond
+                 ((null params)
+                  (if keyword
+                      (append acc (bind-keyword nil nil args))
+                      (append (bind-vari args) acc)))
+                 ;; fewer arguments than parameters
+                 ((null args)
+                  (aif (and eval-defaults (get-optional (car params)))
+                       (bind-positional (cons (cons (caar params) it)
+                                              acc)
+                                        (cdr params)
+                                        nil)
+                       "Too few arguments"))
+                 (t (bind-positional (cons (cons (caar params)
+                                                 (car args))
                                            acc)
                                      (cdr params)
-                                     nil))
-                   (t (bind-positional (cons (cons (caar params)
-                                                   (car args))
-                                             acc)
-                                       (cdr params)
-                                       (cdr args)))))
-               ;; vari-acc tracks variadic keyword args where applicable
-               (bind-keyword (acc vari-acc args)
-                 (if args
-                     (let* ((k (car args))
-                            (v (cadr args)))
-                       (unless (sym? k)
-                         (runtime-error "~aMalformed keyword argument" err-pre))
-                       (when (null v)
-                         (runtime-error "~aOdd number of keyword arguments" err-pre))
-                       (if (assoc k keyword :test #'equal)
-                           (bind-keyword (cons (cons k v) acc)
-                                         vari-acc
-                                         (cddr args))
-                           (if vari
-                               ;; vari-acc is built backwards
-                               (bind-keyword acc
-                                             (cons v (cons k vari-acc))
-                                             (cddr args))
-                               (runtime-error "~aUnrecognized keyword argument ~s"
-                                              err-pre
-                                              (sym-name k)))))
-                     ;; make sure all required keywords are bound
-                     (let ((res
-                            (mapcar $(or (assoc (car $) acc :test #'equal)
-                                         (cons (car $) (get-optional $)))
-                                    keyword)))
-                       (if vari
-                           (cons (cons vari (apply #'fnlist (nreverse vari-acc)))
-                                 res)
-                           res))))
-               (bind-vari (args)
-                 (if vari
-                     (list (cons vari (apply #'fnlist args)))
-                     (if args
-                         (runtime-error "~aToo many arguments" err-pre)
-                         nil))))
-        (bind-positional nil pos args)))))
+                                     (cdr args)))))
+             ;; vari-acc tracks variadic keyword args where applicable
+             (bind-keyword (acc vari-acc args)
+               (if args
+                   (let* ((k (car args))
+                          (v (cadr args)))
+                     (cond
+                       ((not (sym? k)) "Malformed keyword argument")
+                       ((null v) "Odd number of keyword arguments")
+                       ((assoc k keyword :test #'equal)
+                        (bind-keyword (cons (cons k v) acc)
+                                      vari-acc
+                                      (cddr args)))
+                       (vari (bind-keyword acc
+                                           ;; VARI-ACC is built backwards
+                                           (cons v (cons k vari-acc))
+                                           (cddr args)))
+                       (t (format nil
+                                  "Unrecognized keyword argument ~s"
+                                  (sym-name k)))))
+                   (let ((res (mapcar $(or (assoc (car $) acc :test #'equal)
+                                           (cons (car $) (aif (get-optional $)
+                                                              it
+                                                              (and eval-defaults fnnull))))
+                                      keyword)))
+                     (if vari
+                         (cons (cons vari (apply #'fnlist (nreverse vari-acc)))
+                               res)
+                         res))))
+             (bind-vari (args)
+               (if vari
+                   (list (cons vari (apply #'fnlist args)))
+                   (if args
+                       "Too many arguments"
+                       nil))))
+      (bind-positional nil pos args))))
+
+;; (defun params-alist (param-list args outer-env &optional op-name)
+;;   "Create an ALIST matching parameter symbols to argument values. This function generates runtime
+;;  errors if the provided argument list doesn't match the parameter list. As such it may be used for
+;;  error checking. OP-NAME is a string used for error reporting."
+;;   (with-slots (pos keyword vari) param-list
+;;     (let ((err-pre (if op-name
+;;                        (strcat op-name ": ")
+;;                        "")))
+;;       (labels ((get-optional (p)
+;;                  (if (cdr p)
+;;                      (eval-code (cdr p) outer-env)
+;;                      (runtime-error "~aToo few arguments" err-pre)))
+;;                (bind-positional (acc params args)
+;;                  (cond
+;;                    ((null params)
+;;                     (if keyword
+;;                         (append acc (bind-keyword nil nil args))
+;;                         (append (bind-vari args) acc)))
+;;                    ((null args)
+;;                     (bind-positional (cons (cons (caar params)
+;;                                                  (get-optional (car params)))
+;;                                            acc)
+;;                                      (cdr params)
+;;                                      nil))
+;;                    (t (bind-positional (cons (cons (caar params)
+;;                                                    (car args))
+;;                                              acc)
+;;                                        (cdr params)
+;;                                        (cdr args)))))
+;;                ;; vari-acc tracks variadic keyword args where applicable
+;;                (bind-keyword (acc vari-acc args)
+;;                  (if args
+;;                      (let* ((k (car args))
+;;                             (v (cadr args)))
+;;                        (unless (sym? k)
+;;                          (runtime-error "~aMalformed keyword argument" err-pre))
+;;                        (when (null v)
+;;                          (runtime-error "~aOdd number of keyword arguments" err-pre))
+;;                        (if (assoc k keyword :test #'equal)
+;;                            (bind-keyword (cons (cons k v) acc)
+;;                                          vari-acc
+;;                                          (cddr args))
+;;                            (if vari
+;;                                ;; vari-acc is built backwards
+;;                                (bind-keyword acc
+;;                                              (cons v (cons k vari-acc))
+;;                                              (cddr args))
+;;                                (runtime-error "~aUnrecognized keyword argument ~s"
+;;                                               err-pre
+;;                                               (sym-name k)))))
+;;                      ;; make sure all required keywords are bound
+;;                      (let ((res
+;;                             (mapcar $(or (assoc (car $) acc :test #'equal)
+;;                                          (cons (car $) (get-optional $)))
+;;                                     keyword)))
+;;                        (if vari
+;;                            (cons (cons vari (apply #'fnlist (nreverse vari-acc)))
+;;                                  res)
+;;                            res))))
+;;                (bind-vari (args)
+;;                  (if vari
+;;                      (list (cons vari (apply #'fnlist args)))
+;;                      (if args
+;;                          (runtime-error "~aToo many arguments" err-pre)
+;;                          nil))))
+;;         (bind-positional nil pos args)))))
 
 (defun extend-env/params (param-list args &key (parent *current-env*) call-stack op-name)
   "Extend an evironment with the provided params. Optionally add a new frame to the call stack.
@@ -262,22 +331,42 @@
  what PARENT is. PARAM-LIST may be NIL, in which case no symbols will be added to the new
  environment's table."
   (if param-list
-      (let* ((binding-alist (remove-if $(eq (car $) wildcard-sym)
-                                       (params-alist param-list args parent op-name)))
-             (*current-env* (extend-env (mapcar #'car binding-alist)
-                                        :parent parent
-                                        :call-stack call-stack)))
-        (mapc $(setf (env-var *current-env* (car $)) (cdr $)) binding-alist)
-        *current-env*)
+      (let* ((*current-env* parent)
+             (binding-alist (params-alist param-list args)))
+        (if (stringp binding-alist)
+            (runtime-error binding-alist (strcat op-name ": " binding-alist))
+            (let ((*current-env* (extend-env (mapcar #'car
+                                                (remove-if $(eq (car $) wildcard-sym)
+                                                           binding-alist))
+                                             :parent parent
+                                             :call-stack call-stack)))
+              (mapc $(setf (env-var *current-env* (car $)) (cdr $)) binding-alist)
+              *current-env*)))
       (extend-env nil)))
 
+;; TODO: rewrite using new version of PARAMS-ALIST
 (defun bind-params (param-list args outer-env op-name)
   "Extend OUTER-ENV with variable bindings created by PARAM-LIST and ARGS."
-  (let* ((binding-alist (remove-if $(eq (car $) wildcard-sym)
-                                   (params-alist param-list args outer-env op-name)))
-         (*current-env* (extend-env (mapcar #'car binding-alist) :parent outer-env)))
-    (mapc $(setf (env-var *current-env* (car $)) (cdr $)) binding-alist)
-    *current-env*))
+  (let ((*current-env* outer-env)
+        (binding-alist (params-alist param-list args)))
+    ;; string return value === error
+    (if (stringp binding-alist)
+        (runtime-error binding-alist (strcat op-name ": " binding-alist))
+        (let ((*current-env* (extend-env (mapcar #'car
+                                                 (remove-if $(eq (car $) wildcard-sym)
+                                                            binding-alist))
+                                         :parent outer-env
+                                         :call-stack (env-call-stack *current-env*))))
+          (mapc $(setf (env-var *current-env* (car $)) (cdr $)) binding-alist)
+          *current-env*))))
+
+;; (defun bind-params (param-list args outer-env op-name)
+;;   "Extend OUTER-ENV with variable bindings created by PARAM-LIST and ARGS."
+;;   (let* ((binding-alist (remove-if $(eq (car $) wildcard-sym)
+;;                                    (params-alist param-list args outer-env op-name)))
+;;          (*current-env* (extend-env (mapcar #'car binding-alist) :parent outer-env)))
+;;     (mapc $(setf (env-var *current-env* (car $)) (cdr $)) binding-alist)
+;;     *current-env*))
 
 (defun expand-macro (macro-fun c)
   (with-slots (filename line column) (code-origin c)
@@ -350,6 +439,102 @@
       (runtime-error "apply: Last argument must be a list"))
     (let ((arg-list (fnlist->list (reduce #'cons args :from-end t))))
       (call-obj op arg-list origin))))
+
+;;; case
+(defun eval-case (obj-expr body)
+  (let ((obj (eval-code obj-expr)))
+    (rlambda (clauses) ((group 2 body))
+      (if clauses
+          (let ((match-res (match-pattern obj (caar clauses))))
+            (if (eq match-res :no-match)
+                (recur (cdr clauses))
+                ;; successful matching returns an ENV
+                (let ((*current-env*
+                       (extend-env/values (mapcar #'car match-res)
+                                          (mapcar #'cdr match-res))))
+                  (eval-code (cadar clauses)))))
+          fnnull))))
+
+(defun match-pattern (obj pattern)
+  "Perform pattern matching on OBJ. Returns an ALIST of bindings on success. Returns :NO-MATCH on
+ failure. A runtime error is emitted if an invalid pattern is detected."
+  (let* ((d (code-data pattern))
+         (op (if (listp d) (code-data (car d)) nil)))
+    (cond
+      ;; constants
+      ((num? d) (if (and (num? obj) (= obj d))
+                    ;; counterintuitively, returning NIL means the match succeeded
+                    nil
+                    :no-match))
+      ((string? d) (if (equal obj d)
+                       nil
+                       :no-match))
+      ;; wildcard
+      ((eq d wildcard-sym) nil)
+      ;; variable
+      ((sym? d) (list (cons d obj)))
+      ((not (listp d)) :no-match)
+      ;; list
+      ((eq op list-class-sym)
+       (match-list-pattern obj (cdr d)))
+      ;; match on object structure based on its class
+      ((not (or (sym? op) (code-dotted-get? (car d))))
+       (runtime-error "case: Malformed pattern"))
+      ;; matching on object structure => we need to get the object's class
+      (t (let ((class (eval-code (car d))))
+           (unless (fnclass? class)
+             (runtime-error "case: Unrecognized pattern operator"))
+           (match-class-pattern obj class (cdr d)))))))
+
+(defun match-list-pattern (obj subpatterns)
+  (if (fnlist? obj)
+      (rlambda (acc list ps) (nil obj subpatterns)
+        (cond
+          ;; no more subpatterns
+          ((null ps)
+           (if (empty? list)
+               acc
+               :no-match))
+          ;; variadic argument
+          ((eq (code-data (car ps)) amp-sym)
+           (unless (length= ps 2)
+             (runtime-error "Malformed variadic parameter in List pattern"))
+           (let ((match-res (match-pattern list (cadr ps))))
+             (if (eq match-res :no-match)
+                 :no-match
+                 (append match-res acc))))
+          ;; empty list but not out of parameters
+          ((empty? list) :no-match)
+          ;; check the next pattern
+          (t (let ((match-res (match-pattern (car list) (car ps))))
+               (if (eq match-res :no-match)
+                   :no-match
+                   (recur (append match-res acc) (cdr list) (cdr ps)))))))
+      :no-match))
+
+(defun match-class-pattern (obj class args)
+  (declare (ignorable obj class args))
+  ;; we do PARAMS-ALIST first for error handling
+  (aif (fnclass-params class)
+       (let ((alist (params-alist it args nil)))
+         ;; PARAMS-ALIST returns a string on failure
+         (when (stringp alist)
+           (runtime-error (strcat "case: In pattern: " alist)))
+         (if (eq (fnobj-class obj) class)
+             (rlambda (acc src) (nil alist)
+               (if src
+                   (let ((res (match-pattern (get-field obj (caar src))
+                                             (cdar src))))
+                     (if (eq res :no-match)
+                         :no-match
+                         (recur (nconc res acc) (cdr src))))
+                   (nreverse acc)))
+             :no-match))
+       ;; if the class has no parameters, just say yes
+       ;; FIXME: emit an error if there are subpatterns to a PARAMS-less class
+       (if (eq (fnobj-class obj) class)
+           nil
+           :no-match)))
 
 ;;; class-of
 (defun eval-class-of (arg-code)
@@ -440,7 +625,7 @@
 (defun eval-defclass (name params-code)
   (let* ((params (code->param-list params-code))
          (fields (param-list-vars params))
-         (new-class (make-fnclass :name name :fields fields)))
+         (new-class (make-fnclass :name name :fields fields :params params)))
     (setf (fnclass-constructor new-class) (make-constructor new-class params))
     (safe-add-global name new-class nil "defclass")
     new-class))

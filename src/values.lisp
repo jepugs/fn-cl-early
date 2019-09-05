@@ -48,7 +48,8 @@
    :fnfun :params :body :env :closure :param-list-syms :make-fnfun :fnfun? :fnfun-name
    :fnfun-params :fnfun-body :fnfun-closure
    ;; general objects
-   :fnclass :fields :constructor :fnclass-name :make-fnclass :fnclass-fields :fnclass-constructor :fnclass?
+   :fnclass :fields :constructor :fnclass-name :make-fnclass :fnclass-fields :fnclass-constructor
+   :fnclass-params :fnclass?
    :fnobj :class :contents :make-fnobj :fnobj-class :fnobj-contents :fnobj?
    :fnmethod :make-fnmethod :fnmethod? :get-impl :set-impl :fnmethod-params :impls :dispatch-params
    :fnmethod-dispatch-params :fnmethod-impls :fnmethod-default-impl :default-impl :fnmethod-name
@@ -292,6 +293,7 @@
 (defstruct (fnclass (:predicate fnclass?) :copier)
   (name nil :type sym :read-only t)
   (fields nil :type list :read-only t)
+  (params nil :type (or null param-list) :read-only t)
   (constructor nil))
 
 (defstruct (fnobj (:predicate fnobj?) :copier)

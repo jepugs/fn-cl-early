@@ -36,7 +36,7 @@
    ;; runtime structure
    :runtime :make-runtime :runtime-built-in-module :runtime-modules :runtime-symtab
    ;; runtime state
-   :*current-env* :*runtime* :fnintern :fngensym :init-env :extend-env
+   :*current-env* :*runtime* :fnintern :fngensym :init-env :extend-env :extend-env/values
    ;; dotted get
    :code-dotted-get? :dotted-get-root :dotted-get-keys :dotted-get-cell :dotted-get-macro
    ;; module search/init
@@ -283,6 +283,19 @@
                         :call-stack (or call-stack (env-call-stack parent))
                         :parent parent)))
     (mapc $(setf (gethash (sym-id $) table) (make-cell :mutable t)) syms)
+    res))
+
+(defun extend-env/values (syms values &key (parent *current-env*) call-stack module)
+  "Like EXTEND-ENV but also initializes SYMS to the provided values."
+  (let* ((table (make-hash-table))
+         (res (make-env :table table
+                        :module (or module (env-module parent))
+                        :call-stack (or call-stack (env-call-stack parent))
+                        :parent parent)))
+    (mapc $(setf (gethash (sym-id $0) table)
+                 (make-cell :value $1 :mutable t))
+          syms
+          values)
     res))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
