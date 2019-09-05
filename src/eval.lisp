@@ -124,62 +124,88 @@
 
 ;;;; List evaluation
 
+(eval-when (:compile-toplevel :load-toplevel :execute)
+  (defvar special-operators nil
+    "ALIST of special operators and evaluation functions.")
+
+  (defmacro defop (sym &body fun-body)
+    "Define a special operator. Variables C and ARGS are bound automatically to the code object
+ being evaluated and the operator's arguments respectively."
+    (with-gensyms (fun)
+      `(labels ((,fun (c)
+                  (declare (ignorable c))
+                  (let ((args (code-cdr c)))
+                    (declare (ignorable args))
+                    ,@fun-body)))
+         (push (cons ,sym #',fun)
+               special-operators)))))
+
+(defop apply-sym
+  (eval-apply (code-origin c) args))
+(defop case-sym
+  (eval-case (car args) (cdr args)))
+(defop class-of-sym
+  (eval-class-of (car args)))
+(defop cond-sym
+  (eval-cond args))
+(defop def-sym
+  (eval-def (car args) (cdr args)))
+(defop defclass-sym
+  (eval-defclass (code-data (code-car (car args)))
+                 (code-cdr (car args))))
+(defop defmacro-sym
+  (eval-defmacro (code-data (code-car (car args)))
+                 (code-cdr (car args))
+                 (cdr args)))
+(defop defmethod-sym
+  (eval-defmethod (code-data (code-caar (car args)))
+                  (code-cdar (car args))
+                  (code-cdr (car args))))
+(defop defvar-sym
+   (eval-defvar (code-data (car args)) (cadr args)))
+(defop do-sym
+  (eval-do args))
+(defop dollar-fn-sym
+  (eval-dollar-fn (car args)))
+(defop fn-sym
+  (eval-fn (car args) (cdr args)))
+(defop get-sym
+  (eval-get (car args) (cdr args)))
+(defop if-sym
+  (eval-if (car args) (cadr args) (caddr args)))
+(defop import-sym
+  (eval-import (code-data (car args)) (cdr args)))
+(defop let-sym
+  (eval-let (car args) (cdr args)))
+(defop quasiquote-sym
+  (eval-quasiquote (car args)))
+(defop quote-sym
+  (eval-quote (car args)))
+(defop set-sym
+  (eval-set (car args) (cadr args)))
+(defop unquote-sym
+  (runtime-error "unquote: unquote outside of quasiquote"))
+(defop unquote-splice-sym
+  (runtime-error "unquote-splice: unquote-splice outside of quasiquote"))
+
 (defun eval-list (c)
-  (let* ((op (code-data (code-car c)))
-         (args (code-cdr c)))
-    (cond
-      ((eq op apply-sym) (eval-apply (code-origin c) args))
-      ((eq op case-sym) (eval-case (car args) (cdr args)))
-      ((eq op class-of-sym) (eval-class-of (car args)))
-      ((eq op cond-sym) (eval-cond args))
-      ((eq op def-sym) (eval-def (car args) (cdr args)))
-      ((eq op defclass-sym)
-       (eval-defclass (code-data (code-car (car args)))
-                      (code-cdr (car args))))
-      ((eq op defmacro-sym)
-       (eval-defmacro (code-data (code-car (car args)))
-                      (code-cdr (car args))
-                      (cdr args)))
-      ((eq op defmethod-sym)
-       (eval-defmethod (code-data (code-caar (car args)))
-                       (code-cdar (car args))
-                       (code-cdr (car args))))
-      ((eq op defvar-sym)
-       (eval-defvar (code-data (car args))
-                    (cadr args)))
-      ((eq op do-sym)
-       (eval-do args))
-      ((eq op dollar-fn-sym)
-       (eval-dollar-fn (car args)))
-      ((eq op fn-sym)
-       (eval-fn (car args) (cdr args)))
-      ((eq op get-sym)
-       (eval-get (car args) (cdr args)))
-      ((eq op if-sym)
-       (eval-if (car args) (cadr args) (caddr args)))
-      ((eq op import-sym)
-       (eval-import (code-data (car args)) (cdr args)))
-      ((eq op let-sym)
-       (eval-let (car args) (cdr args)))
-      ((eq op quasiquote-sym)
-       (eval-quasiquote (car args)))
-      ((eq op quote-sym)
-       (eval-quote (car args)))
-      ((eq op set-sym)
-       (eval-set (car args) (cadr args)))
-      ((eq op unquote-sym)
-       (runtime-error "unquote: unquote outside of quasiquote"))
-      ((eq op unquote-splice-sym)
-       (runtime-error "unquote-splice: unquote-splice outside of quasiquote"))
-      ((code-dotted-get? (code-car c))
-       (eval-get-op-list c))
-      ((not (sym? op)) (eval-funcall c))
-      ;; check for macros
-      (t (aif (env-macro *current-env* op)
-              (let ((code (expand-macro it c)))
-                (validate-code code)
-                (eval-code code))
-              (eval-funcall c))))))
+  (let* ((op-code (code-car c))
+         (op (code-data op-code)))
+    (aif (and (sym? op)
+              (assoc op special-operators))
+         (funcall (cdr it) c)
+         (cond
+           ;; FIXME: compiled dot and symbol macro search
+           ;; when a dotted get is the operator, we have to check whether it's a macro.
+           ((code-dotted-get? op-code) (eval-get-op-list c))
+           ;; other operator expressions are treated as function calls
+           ((not (sym? op)) (eval-funcall c))
+           ;; check for macros before evaluating as a function call
+           (t (aif (env-macro *current-env* op)
+                   (let ((code (expand-macro it c)))
+                     (validate-code code)
+                     (eval-code code))
+                   (eval-funcall c)))))))
 
 (defun eval-get-op-list (c)
   "Evaluate a list where the head is a dotted get form."
@@ -207,8 +233,8 @@
                (cond
                  ((null params)
                   (if keyword
-                      (append acc (bind-keyword nil nil args))
-                      (append (bind-vari args) acc)))
+                      (bind-keyword acc nil args)
+                      (bind-vari acc args)))
                  ;; fewer arguments than parameters
                  ((null args)
                   (aif (and eval-defaults (get-optional (car params)))
@@ -241,89 +267,25 @@
                        (t (format nil
                                   "Unrecognized keyword argument ~s"
                                   (sym-name k)))))
-                   (let ((res (mapcar $(or (assoc (car $) acc :test #'equal)
-                                           (cons (car $) (aif (get-optional $)
-                                                              it
-                                                              (and eval-defaults fnnull))))
+                   (let ((res (mapcan $(if (assoc (car $) acc :test #'equal)
+                                           nil
+                                           `(,(cons (car $)
+                                                    (aif (get-optional $)
+                                                         it
+                                                         (and eval-defaults fnnull)))))
                                       keyword)))
+                     ;; we have to reverse the keyword list
                      (if vari
                          (cons (cons vari (apply #'fnlist (nreverse vari-acc)))
-                               res)
-                         res))))
-             (bind-vari (args)
+                               (nconc (nreverse res) acc))
+                         (nconc (nreverse res) acc)))))
+             (bind-vari (acc args)
                (if vari
-                   (list (cons vari (apply #'fnlist args)))
+                   (nreverse (cons (cons vari (apply #'fnlist args)) acc))
                    (if args
                        "Too many arguments"
-                       nil))))
+                       (nreverse acc)))))
       (bind-positional nil pos args))))
-
-;; (defun params-alist (param-list args outer-env &optional op-name)
-;;   "Create an ALIST matching parameter symbols to argument values. This function generates runtime
-;;  errors if the provided argument list doesn't match the parameter list. As such it may be used for
-;;  error checking. OP-NAME is a string used for error reporting."
-;;   (with-slots (pos keyword vari) param-list
-;;     (let ((err-pre (if op-name
-;;                        (strcat op-name ": ")
-;;                        "")))
-;;       (labels ((get-optional (p)
-;;                  (if (cdr p)
-;;                      (eval-code (cdr p) outer-env)
-;;                      (runtime-error "~aToo few arguments" err-pre)))
-;;                (bind-positional (acc params args)
-;;                  (cond
-;;                    ((null params)
-;;                     (if keyword
-;;                         (append acc (bind-keyword nil nil args))
-;;                         (append (bind-vari args) acc)))
-;;                    ((null args)
-;;                     (bind-positional (cons (cons (caar params)
-;;                                                  (get-optional (car params)))
-;;                                            acc)
-;;                                      (cdr params)
-;;                                      nil))
-;;                    (t (bind-positional (cons (cons (caar params)
-;;                                                    (car args))
-;;                                              acc)
-;;                                        (cdr params)
-;;                                        (cdr args)))))
-;;                ;; vari-acc tracks variadic keyword args where applicable
-;;                (bind-keyword (acc vari-acc args)
-;;                  (if args
-;;                      (let* ((k (car args))
-;;                             (v (cadr args)))
-;;                        (unless (sym? k)
-;;                          (runtime-error "~aMalformed keyword argument" err-pre))
-;;                        (when (null v)
-;;                          (runtime-error "~aOdd number of keyword arguments" err-pre))
-;;                        (if (assoc k keyword :test #'equal)
-;;                            (bind-keyword (cons (cons k v) acc)
-;;                                          vari-acc
-;;                                          (cddr args))
-;;                            (if vari
-;;                                ;; vari-acc is built backwards
-;;                                (bind-keyword acc
-;;                                              (cons v (cons k vari-acc))
-;;                                              (cddr args))
-;;                                (runtime-error "~aUnrecognized keyword argument ~s"
-;;                                               err-pre
-;;                                               (sym-name k)))))
-;;                      ;; make sure all required keywords are bound
-;;                      (let ((res
-;;                             (mapcar $(or (assoc (car $) acc :test #'equal)
-;;                                          (cons (car $) (get-optional $)))
-;;                                     keyword)))
-;;                        (if vari
-;;                            (cons (cons vari (apply #'fnlist (nreverse vari-acc)))
-;;                                  res)
-;;                            res))))
-;;                (bind-vari (args)
-;;                  (if vari
-;;                      (list (cons vari (apply #'fnlist args)))
-;;                      (if args
-;;                          (runtime-error "~aToo many arguments" err-pre)
-;;                          nil))))
-;;         (bind-positional nil pos args)))))
 
 (defun extend-env/params (param-list args &key (parent *current-env*) call-stack op-name)
   "Extend an evironment with the provided params. Optionally add a new frame to the call stack.
@@ -334,10 +296,10 @@
       (let* ((*current-env* parent)
              (binding-alist (params-alist param-list args)))
         (if (stringp binding-alist)
-            (runtime-error binding-alist (strcat op-name ": " binding-alist))
+            (runtime-error (strcat op-name ": " binding-alist))
             (let ((*current-env* (extend-env (mapcar #'car
-                                                (remove-if $(eq (car $) wildcard-sym)
-                                                           binding-alist))
+                                                     (remove-if $(eq (car $) wildcard-sym)
+                                                                binding-alist))
                                              :parent parent
                                              :call-stack call-stack)))
               (mapc $(setf (env-var *current-env* (car $)) (cdr $)) binding-alist)
@@ -359,14 +321,6 @@
                                          :call-stack (env-call-stack *current-env*))))
           (mapc $(setf (env-var *current-env* (car $)) (cdr $)) binding-alist)
           *current-env*))))
-
-;; (defun bind-params (param-list args outer-env op-name)
-;;   "Extend OUTER-ENV with variable bindings created by PARAM-LIST and ARGS."
-;;   (let* ((binding-alist (remove-if $(eq (car $) wildcard-sym)
-;;                                    (params-alist param-list args outer-env op-name)))
-;;          (*current-env* (extend-env (mapcar #'car binding-alist) :parent outer-env)))
-;;     (mapc $(setf (env-var *current-env* (car $)) (cdr $)) binding-alist)
-;;     *current-env*))
 
 (defun expand-macro (macro-fun c)
   (with-slots (filename line column) (code-origin c)
