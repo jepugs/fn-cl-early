@@ -30,7 +30,8 @@
     ("fn" 4 . 2)
     ("let" 4 . 2)))
 
-;; this matches any kind of symbol, including those with escaped characters.
+;; this matches any kind of symbol, including those with escaped characters or $-signs, even at the
+;; beginning of the string.
 (defvar symbol-regexp
   "\\(\\(?:\\\\.\\|\\$\\)*\\_<\\(?:\\s_\\|[[:word:]$]\\|\\\\.\\)+\\_>\\)")
 

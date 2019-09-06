@@ -1,3 +1,14 @@
+#+TITLE: fn Language Reference (WIP)
+
+* This document is undergoing a major revision
+
+There are some things that are quite outdated. With luck the whole thing will be updated soon. At
+the time of writing, the [[syntax][Syntax]] section is the only one which may be considered complete. The other
+stuff is mostly accurate too. 
+
+To further complicate things, the programming language is not fully implemented in the interpreter
+yet. Please stand by.
+
 * Introduction
 
 fn is a programming language in the Lisp family. It will feature a robust and streamlined object
@@ -20,7 +31,6 @@ order to avoid such issues. Thus the goals of hygiene may be achieved without re
 special syntax objects or creating a pattern-based DSL.
 
 
-
 ** Implementation notes
 
 - Everything is implemented in Common Lisp. The only supported implementation is SBCL. No particular
@@ -29,6 +39,271 @@ special syntax objects or creating a pattern-based DSL.
 - I am currently in the process of rewriting fn. The previous version, which was nearly a feature
   complete version 0, was built as a layer on top of Common Lisp, using the Common Lisp reader and
   macros to implement almost all of its features. This new version will be a proper interpreter.
+
+
+* <<syntax>>Syntax
+
+Expressions[fn:1] in fn are built from what are termed *forms*. The *forms* are a superset of all valid
+expressions in fn (i.e. all expressions are forms, but the converse is not true)[fn:2]. There are
+two varieties of forms: *lists*[fn:list-forms] and *atoms*. <<def:list-form>> *Lists* are compound forms
+which may contain other forms. We often refer to lists by their first subform, termed the *operator*.
+For example, ~(get a b)~ could be called a ~get~ form. <<def:atom>> *Atoms* are defined by the fact that
+they contain no subforms, and are divided into three kinds: symbols, numeric constants, and string
+constants.
+
+#+BEGIN_SRC fn
+;;; examples of atoms and lists
+;;; lines beginning with ; are comments
+
+;;; strings
+"string"
+"hello, world!"
+;; all C++-style string escape codes may be used
+"\"quotes\""
+"multi-\nline"
+
+;;; numbers
+1
+1.2
+-34
+2.3e-4
+
+;;; symbols
+x
+var
+Table
+;; symbols in fn can contain a variety of non-alphanumeric characters
+multiple-word-function-name
+$it
++
+*
+;; symbols may include numbers, even at the beginning
+1st
+2nd
+times-2
+;; \ is a universal escape character which allows any character to be included in a symbol name, 
+;; including whitespace, so the following is actually a valid symbol.
+C:\\Program\ Files\\
+
+;;; lists are usually denoted by parentheses
+(+ 2 5)
+(+ (- 5 3) 6)
+;; fn is an example of a special operator; specifically, it is used to create functions
+(fn (x) (* x 2))
+;; the empty list, an example of a form that is not a valid expression on its own
+()
+#+END_SRC
+
+[fn:1] Many programming languages also have /statements/, which are constructs that perform an action
+without returning any value. fn does not, although many types of expressions, such as definitions,
+may have their return value safely ignored.
+
+# TODO: link to macros section
+[fn:list-forms] The word "list" can also refer to fn's built-in linked list data structure. When
+saying "list" would be ambiguous, we will use the phrases *list form* and *list object*. As a sidenote,
+list forms have the same internal representation as list objects, making it easy to manipulate fn
+source code from within an fn program. This property is central to fn's metaprogramming facilities,
+which allow new syntax to be defined with relatively little effort.
+
+# TODO: link to macros section
+[fn:2] The line between forms and expressions can be blurry. For instance, the empty list ~()~ is not
+a legal expression on its own, but it is perfectly fine when it appears as a parameter list for a
+function, e.g. in the expression ~(fn () 17)~ which creates a constant-valued function of no
+arguments. This distinction is further exacerbated by the fact that fn's macro system allows
+definition of new syntax by manipulating forms prior to execution. A useful way to think about it is
+this: invalid /forms/ cause errors during /parsing/, while invalid /expressions/ cause errors during
+/evaluation/ (aka execution).
+
+** <<syntax.atoms>>Atom Syntax In Depth
+
+*IMPLNOTE:* The current version of the interpreter does not respect octal or hexadecimal string escape
+characters or exponential notation for numbers.
+
+*** <<syntax.strings>>Strings
+
+Strings begin and end with double quotes, ~"~. Everything between the quotes is part of the string.
+Strings containing the character ~"~ may be created by using the escape sequence ~\"~ e.g. ~"\""~ is a
+length-1 string containing a double quote character. In addition, the following escape sequences are
+provided:
+
+| Escape sequence                           |                                             |
+|-------------------------------------------+---------------------------------------------|
+| \a                                        | ASCII bell                                  |
+| \b                                        | ASCII backspace                             |
+| \f                                        | form feed                                   |
+| \n                                        | newline (line feed)                         |
+| \r                                        | carriage return                             |
+| \t                                        | tab                                         |
+| \v                                        | vertical tab                                |
+| \'                                        | single quote[fn:useless-esc]                |
+| \"                                        | double quote                                |
+| \?                                        | question mark[fn:useless-esc]               |
+| \\                                        | backslash                                   |
+| \xHH (HH is a 2-digit hexadecimal number) | insert character by its hexadecimal code HH |
+| \OOO (OOO is a 3-digit octal number)      | insert character by its octal code 000      |
+
+Unlike in some languages, newline and tab characters are preserved when strings are parsed.
+
+
+[fn:useless-esc] These escape codes are retained for compatibility with C string syntax and are not
+particularly useful
+
+*** <<syntax.numbers>>Numbers
+
+Numbers are atoms consisting of numeric characters. In addition,
+
+- The first character may be + or -. (Note: these characters by themselves are symbols, not
+  numbers)
+- There may be exactly one occurrence of ~.~ anywhere in the atom
+- There may be exactly one occurrence of ~e~. The ~e~ may not occur at the beginning or end of the
+  number and must come after any occurrence of ~.~ (dot).
+
+Numbers may not contain escaped characters, e.g. ~1\0~ is a symbol rather than a number.
+
+*** <<syntax.symbols>>Symbols
+
+A symbol is denoted by a series of permissible characters that does not form a valid number, (see
+[[syntax.numbers]]). Before accounting for escaping, symbols may contain any ASCII characters other than
+whitespace or these glyphs[fn:glyph]:
+
+#+BEGIN_SRC
+`()[]{};'",.
+#+END_SRC
+
+In addition, any ASCII character can be used as part of a symbol by prefixing it with the escape
+character ~\~.
+
+Symbols are terminated by the first unescaped non-symbol character after the start of the symbol.
+Care should be taken when using the character ~$~ as a symbol constituent, as the two-character
+sequences $(, $[, ${, and $` are used for special anonymous function syntax, see [[syntax.dollar]]
+
+[fn:glyph] The word "glyphs" is used here to distinguish symbol characters from the fn concept of a
+symbol.
+
+
+** <<syntax.parens>>Parenthesized Lists
+
+Parenthesized lists consist of a series of forms contained within a matching pair of parentheses.
+They can be nested to an arbitrary depth.
+
+All other list syntax can be rewritten using parenthesized lists alone. In fact, the interpreter
+converts other types of list syntax to have the same internal representation as parenthesized lists
+before evaluating them, see [[syntax.lists]].
+
+
+** <<syntax.lists>>Other List Syntax
+
+All fn code can be represented using parenthesized lists alone, however several other ways to create
+list forms are provided for convenience. The interpreter expands these forms into parenthesized
+lists before evaluating them. The expansion happens regardless of the context in which these forms
+appear (but not in string literals, as those are an entirely different type of form).
+
+# TODO: add links to relevant special forms
+
+*** <<syntax.brackets>>Square Brackets
+
+Bracket forms consist of a matched pair of square brackets containing a (possibly-empty) sequence of
+forms. Square brackets are used to create list objects in fn programs. Accordingly, they expand to
+~List~ forms, ~List~ being the class of fn's built-in list objects.
+
+#+BEGIN_SRC fn
+[x y z]
+;; expands to
+(List x y z)
+
+[]
+;; expands to
+(List)
+#+END_SRC
+
+*** <<syntax.braces>>Braces
+
+Brace forms consist of a matched pair of braces containing a (possibly-empty) sequence of forms.
+Braces are used to create table objects in fn programs. Accordingly, they expand to ~Table~ forms,
+~Table~ being the class of fn's built-in list objects.
+
+#+BEGIN_SRC fn
+{key1 value1 key2 value2}
+;; expands to
+(Table key1 value1 key2 value2)
+
+{}
+;; expands to
+(Table)
+#+END_SRC
+
+*** <<syntax.quote>>Quotation
+
+The characters ~'~, ~`~, and ~,~, and the two-character sequence ~,@~ are used for various quotation
+facilities. Each one must be followed immediately by zero or more whitespace characters and then a
+form. They all create lists of two elements where the first element is a special quotation operator
+and the second element is the succeeding form. The operators, respectively, are ~quote~, ~quasiquote~,
+~unquote~, and ~unquote-splice~.
+
+#+BEGIN_SRC fn
+'a
+;; expands to
+(quote a)
+
+'(a b)
+;; expands to
+(quote (a b))
+
+`x
+;; expands to
+(quasiquote x)
+
+,y
+;; expands to
+(unquote y)
+
+,@y
+;; expands to
+(unquote-splice y)
+#+END_SRC
+
+*** <<syntax.dollar>>Dollar Sign
+
+Dollar sign syntax is used to create ~dollar-fn~ forms, which are a convenient way to create
+functions. It consists of the dollar sign character ~$~ followed immediately (i.e. without any
+interposed whitespace) by a [[syntax.parens][parenthesized list]], a [[syntax.brackets][bracket]] form, a [[syntax.braces][brace]] form, or a [[syntax.quote][quasiquote]] form.
+In each case, the following form is wrapped in a ~dollar-fn~ form of a single argument.
+
+#+BEGIN_SRC fn
+$(+ x $)
+;; expands to
+(dollar-fn (+ x $))
+;; note that the second dollar sign is treated as a normal symbol
+
+$[]
+;; expands to
+(dollar-fn (List))
+
+$`(+ ,$ 5)
+;; expands to
+(dollar-fn (quasiquote (+ (unquote $) 5)))
+#+END_SRC
+
+*** <<syntax.dot>>Dot
+
+Dot syntax is used to access the fields of an object. It consists of two or more symbols separated
+by ~.~ (dot) and expands to a ~get~ expression. In the case where there is only one dot, the first
+argument to the ~get~ expression is the left side of the dot, and the second argument is the right
+side, but wrapped in a ~quote~ form. When there are multiple dots, a nested ~get~ form is created by
+applying this rule in a left-associative manner.
+
+#+BEGIN_SRC fn
+a.b
+;; expands to
+(get a (quote b))
+
+a.b.c
+;; expands to
+(get (get a 'b) 'c)
+#+END_SRC
+
+A <<def:dotted-get>> *dotted get form* is any ~get~ form which could be written using dot syntax alone.
+Dotted get forms are used to look up macros, methods, and variables
 
 
 * Modules and Name Resolution
@@ -78,13 +353,6 @@ my-var ;=> 26
 #+END_SRC
 
 
-*** Accessing modules without imports
-
-The function ~(find-module sym)~ can be used to search for modules at runtime (the argument ~sym~ is
-evaluated). Additionally, the syntax ~#.sym~ (eqv. to ~(get # 'sym~)) is available as a shorthand for
-module lookups.
-
-
 *** Implementation note: modules, macros, and dynamic vars
 
 In Common Lisp, importing a macro means importing a symbol from another package. E.g. I import ~LOOP~
@@ -110,6 +378,33 @@ basis. In addition, it will be possible to automatically define wrapper modules 
 their variables from submodules in order to create cleaner interfaces.
 
 
+** Import semantics
+
+Modules may be imported using strings, symbols, or dotted get expressions. Strings are plain UNIX
+path names, while symbols and dots use the module search path, which is
+".:~/.local/lib/fn/modules:/usr/local/lib/fn/modules:/usr/lib/fn/modules". Each of these
+directories is checked in order for the given module.
+
+#+BEGIN_SRC fn
+;;; all these import forms bind the module to a variable named symbol
+
+;; look for "symbol.fn" in the module search path
+(import symbol)
+
+;; look for "symbol.fn" in the current directory
+(import "symbol.fn")
+
+;; look for "pkg/symbol.fn" in the module search path
+(import pkg.symbol)
+
+;; look for "pkg/symbol.fn" in the current directory
+(import "pkg/symbol.fn")
+
+;; look for the absolute path "/usr/lib/symbol.fn"
+(import "/usr/lib/symbol.fn")
+#+END_SRC
+
+
 ** Dynamic variables
 
 In fn, dynamic variables may be created using ~defvar*~. In keeping with lisp tradition, we
@@ -129,8 +424,7 @@ This declares ~*name*~ to be a dynamic variable. Dynamic variables may be reboun
 
 (get-value) ;=> 27
 (let (*special-x* 420)
-  (get-value) ;=> 420
-  )
+  (get-value)) ;=> 420
 (get-value) ;=>27
 #+END_SRC
 
@@ -143,6 +437,7 @@ Example:
   (let (sq (* x x))
     (fun sq)))
 
+;; Note: In real code, global variable should never have such terse names
 (defvar* sq 16)
 
 (def (call-with-square-1 fun x)
@@ -253,6 +548,113 @@ arguments, include "'_" (quote underscore) in the parameter list.
 (fun2 'key 2 'key2 "hello")
 
 #+END_SRC
+
+
+* Parameter lists
+
+Parameter lists play an important role in fn. They control the arguments accepted by functions,
+methods, and macros, but they are also used to define classes and to do pattern matching.
+
+** Parameter List Syntax and Function Calls
+
+A parameter list is a code list consisting of parameters. There are four kinds of parameters in fn,
+which are described below, followed by sample code. Every parameter, regardless of its type, has a
+symbol associated with it, called its *name*. With the exception of the wildcard symbol ~_~ (see
+[[params.wild]]), every name must be unique w/r/t the rest of the parameter list.
+
+- required positional parameters (RPP) :: denoted by plain names, these arguments must come first
+     in the parameter list. If an RPP is found after any other type of parameter in the list, an
+     error is generated.
+- optional positional parameters (OPP) :: denoted by length-2 lists where the head is the name and
+     the second element is a default expression. OPPs come after RPPs but before other types of
+     parameters. If OPPs are not provided, their default expressions are evaluated to determine a
+     value. This is done every time the function is called. The expression is evaluated in the
+     lexical environment in which the function was created, so a surrounding ~(let...)~ block can be
+     used to avoid recomputing default values.
+- keyword parameters (KP) :: denoted by quoted symbols or length-2 lists where the head is a quoted
+     name and the second element is a default expression.
+- variadic parameters (VP) :: must come last in a parameter list. VPs are denoted by the symbol ~&~
+     followed by a plain symbol. The value of a VP depends on whether the parameter list contains
+     any keyword parameters. If it doesn't, then the VP is bound to a list of all arguments after
+     the last positional argument. Otherwise, it is bound to a list of all values after the last
+     positional argument EXCEPT the symbol-value pairs corresponding to explicit keyword arguments.
+     In the latter case, all the non-positional arguments must have an alternating symbol-value
+     form, as if they were all keyword arguments. If this behavior is desired but there are no
+     explicit keyword arguments, then a wildcard keyword parameter may be supplied (see
+     [[params.wild]]).
+
+#+BEGIN_SRC fn
+;;; example: this function has every type of parameter. Two RPPs, one OPP, two KPs, and a VP.
+(def (params-demo rpp0 rpp1 (opp2 null) 'kp3 ('kp4 true) & vp5)
+  (String "rpp0 = " rpp0 "\nrpp1 = " rpp1
+          "\nopp2 = " opp2 "\nkp3 = " kp3
+          "\nkp4 = " kp4 "\nvp5 = " vp5))
+
+;; As few arguments are supplied as possible. opp2 and kp3 default to null, kp4 defaults to true,
+;; and vp5 is bound to empty list.
+(params-demo 0 1)
+;; =>
+"rpp0 = 0.0
+rpp1 = 1.0
+opp2 = null
+kp3 = null
+kp4 = true
+vp5 = []"
+
+;; manually specifying every argument in order
+(params-demo 0 1 2 'kp3 3 'kp4 4 'kp5 5 'kp6 6)
+;; =>
+"rpp0 = 0.0
+rpp1 = 1.0
+opp2 = 2.0
+kp3 = 3.0
+kp4 = 4.0
+vp5 = [kp5 5.0 kp6 6.0]"
+
+;; manually specifying every argument, with keywords out of order
+(params-demo 0 1 2 'kp4 4 'kp6 6 'kp3 3 'kp5 5)
+;; =>
+"rpp0 = 0.0
+rpp1 = 1.0
+opp2 = 2.0
+kp3 = 3.0
+kp4 = 4.0
+vp5 = [kp6 6.0 kp5 5.0]"
+;;; Note that the value of vp5 has keyword arguments in the order they were passed, but omits the
+;;; explicit keyword arguments 
+
+;; this causes an error, because even though there is a variadic parameter, the variadic arguments 
+;; are not symbol/value pairs.
+(params-demo 0 1 2 'kp3 3 'kp4 4 5 6)
+
+;; keyword parameters are not magic. While they are usually passed using quoted symbols in the 
+;; function call, they may also be specified using variables, apply, etc
+(let (first-keyword-sym 'kp3)
+  (apply params-demo 0 1 2 first-keyword-sym [3 'kp4 4]))
+;; =>
+"rpp0 = 0.0
+rpp1 = 1.0
+opp2 = 2.0
+kp3 = 3.0
+kp4 = 4.0
+vp5 = []"
+
+;;; this function demonstrates non-keyword variadic arguments
+(def (params-demo1 rpp0 & vp1)
+  (String "rpp0 = " rpp0 "\nvp1 = " vp1))
+(params-demo1 0 1 2 3)
+;; =>
+"rpp0 = 0.0
+vp1 = [1.0 2.0 3.0]"
+#+END_SRC
+
+** <<params.wild>> Wildcard Parameters
+
+The symbol ~_~ is called a *wildcard parameter*. It may appear anywhere 
+
+** Class Pattern Matching
+
+In order to do 
 
 
 * Classes and Methods
@@ -418,8 +820,8 @@ Naturally, the next step will be printing a stack trace.
 
 * Comprehensive language description
 
-This section completely (and formal-ish-ly) describes fn as it is now. It is a work in progress, but
-its completion is a priority.
+This section completely (and formal-ish-ly) describes the current language design. The interpreter
+does not include
 
 ** Notation
 
@@ -779,16 +1181,22 @@ src ;=><MODULE:src.fn>
 
 #+BEGIN_SRC fn
 ;;; syntax - import
-(import-from <module> (<vars*>))
+(import-from <module> <var-specs*>)
 (import-from <module>)
 ;;; where
 ;; <module> is a module designator
-;; <vars*> is a sequence of symbols
+;; <vars*> is a sequence of symbols and/or lists (<module-var> <new-var>)
+
+
+;; generall, we recommend putting each imported symbol on its own line
+(import-from str (split str-split) 
 #+END_SRC
 
-~import-from~ performs an unqualified import of all the symbols in <vars*> from the module <module>.
-When the one-argument form is used, all symbols are imported. This feature is intended mainly for
-interactive sessions and should be used sparingly outside that context.
+~import-from~ performs an *unqualified import* from the given module. That means that it copies bindings
+from another module into the current one. Bindings are copied by reference in order to ensure that
+immutable and dynamic variables work as expected. When the one-argument form is used, all symbols
+are imported. This feature is intended mainly for interactive sessions and should be used sparingly
+outside that context.
 
 *Impl. Status:* Not implemented
 
@@ -909,12 +1317,25 @@ spliced into the list.
 
 When ~unquote-splice~ appears outside of a quasiquoted list, an error is generated.
 
-** TODO Object manipulation
+** Standard library
+
+Here we're working on defining a standard library for fn. This section is a work in progress and
+will remain so for the forseeable future.
+
+*** TODO Runtime (sys module)
+
+*sys*
+- (reload module)
+- args
+- (loaded-modules)
+- (import-sym )
+
+*** TODO Object manipulation
 
 - =
 - copy
 
-** TODO Control flow
+*** TODO Control flow
 
 - (for seq & body)
 - (loop parameters init-args & body)
@@ -922,13 +1343,13 @@ When ~unquote-splice~ appears outside of a quasiquoted list, an error is generat
 - comp
 - and, or, not
 
-** TODO Macro Writing/Code Manipulation
+*** TODO Macro Writing/Code Manipulation
 
 - module code
 - gensym
 - walk-code
 
-** TODO Math
+*** TODO Math
 
 - +, -, /, *
 - mod
@@ -954,34 +1375,36 @@ When ~unquote-splice~ appears outside of a quasiquoted list, an error is generat
 - bit-nand
 - >>, <<
 
-** TODO Sequences
+*** TODO Sequences and Collections
 
 Many sequence functions have two versions, e.g. map and map0. The difference is that the version
 without the zero returns a lazy list, while the other returns a regular list.
 
 Sequence functions take a sequence object as their last argument.
 
-- (head seq)
-- (tail seq)
-- (empty? seq)
-- (cons item seq)
-- (contains? item seq)
-- (nth n seq)
-- (find fun seq)
-- (take n seq), take0
-- (drop n seq), drop0
-- (take-while fun seq), take-while0
-- (drop-while fun seq), drop-while0
-- (map fun seq), map0
+- (head seq) :: first element of a sequence
+- (tail seq) :: tail of a sequence
+- (empty? seq) :: true if seq has no characters, false otherwise
+- (cons elt seq) :: prepend an element to a list
+- (conj coll elt0 & elts) :: efficiently, non-destructively add item(s) to a collection. The indices
+     of the new items depend on the type of the collection.
+- (contains? coll item (test =)) :: tell if coll contains an item
+- (nth seq n) :: get nth item
+- (find fun seq) :: return the first element in seq satisfying fun
+- (take n seq), take0 :: get the first n items of seq as a lazy list/list
+- (drop n seq), drop0 :: drop the first n items of seq and return the tail
+- (take-while fun seq), take-while0 :: take all contiguous elements satisfying fun
+- (drop-while fun seq), drop-while0 :: drop all contiguous elements satisfying fun
+- (map fun seq0 & seqs), map0 :: apply a function to
 - (filter fun seq), filter0
 - (zip & seqs), zip0
 - (group n seqs), group0
-- (group-by fun seqs), group-by0
-- (interleave fun seqs), interleave0
+- (group-by fun seq), group-by0
+- (interleave & seqs), interleave0
+- (dedupe seq ('by =)), dedupe0
 - (reverse seq)
 - (foldl fun init seq)
 - (foldr fun init seq)
-- (dedupe seq), dedupe0
 
 *sequence creation*
 - (cat & seqs), cat0
@@ -989,7 +1412,7 @@ Sequence functions take a sequence object as their last argument.
 - (repeat seq)
 - (range a b (step 1)), range0
 
-** TODO Files and Streams
+*** TODO Files and Streams
 
 This should encompass all basic POSIX file functionality.
 
@@ -998,7 +1421,7 @@ This should encompass all basic POSIX file functionality.
 - print
 - println
 
-** TODO Strings
+*** TODO Strings
 
 *built-in*
 - String
@@ -1009,12 +1432,109 @@ This should encompass all basic POSIX file functionality.
 - int->char
 
 *str module*
-- split, split0
+- str-split, str-split0
+- str-subst
 - words, words0
 - lines, lines0
-- subst
 - upcase
 - downcase
+
+
+* fn Coding Conventions 
+
+** Names
+
+*** Parameters and local variables
+
+Function parameters and local variables should have short and sweet names that are easy to type
+without being esoteric. The usual best practices apply:
+
+- if you abbreviate something, use the same abbreviation everywhere
+- avoid names of built-in functions and operators (e.g. naming a variable ~map~ or ~if~ is bad form)
+
+Separate words with dashes.
+
+*Common Abbreviations*
+
+Use of the following names and abbreviations is encouraged:
+
+*Types of objects:*
+- obj  :: object (of an arbitrary class)
+- arr  :: array (arrays are not yet implemented)
+- ch   :: character (= string of length 1)
+- fun  :: function
+- int  :: integer
+- num  :: number
+- sym  :: symbol
+- str  :: string
+- tab  :: table (tables are not yet implemented)
+*Code as data:*
+- code :: quoted code
+- expr :: expression (quoted code that will be evaluated)
+- params :: quoted parameter list
+*Sequences & collections*:
+- coll :: collection
+- ct   :: count
+- *hd*   :: sequence head
+- *tl*   :: sequence tail
+- elt  :: element (of a collection)
+- seq  :: sequence
+- tab  :: table
+
+*Do not:*
+- abbreviate ~list~ as ~lst~. This isn't Scheme, and ~list~ with the lowercase ~l~ is not bound to anything
+  by default.
+- use CamelCase for any names. Use lisp-case (words separated by dashes) instead
+- start variable names with upper case letters (with exceptions made for external naming
+  conventions, see below)
+
+*Dealing with external naming conventions*:
+
+The motivation for this section is scientific computing. It is almost always the case that code in a
+research paper, etc. has a set of canonical variable names in it. For instance, naming the energy
+levels of a quantum system as E subscript a number. In this case, we encourage you to bend the above
+variable conventions in order to maintain consistency with the jargon of the field. You should still
+avoid name collisions with built-in functions and special operators just because of the insidious
+bugs these can cause. To represent names with super- or subscripts, use LaTeX notation (_ for
+subscripts and ^ for superscripts), with escaped braces for grouping. Before doing this, consider
+whether the subscripted variable should really be a scalar value or if it should be a function
+indexed container type. Greek letters may also use LaTeX notation. I plan to eventually add an
+extension to neatly export fn source code as LaTeX (for writing up papers).
+
+Example, using some common variables from physics
+
+#+BEGIN_SRC fn
+(def \\pi 3.141593)
+(def h 6.626070e-34)
+(def h-bar (/ h 2 \\pi))
+
+;; use E_1 to denote the first energy level
+;; use m for mass
+(def (inf-well-width m E_1)
+  (options 'type (Num Num -> Float))
+  "Given the first energy level of an infinite square well, compute its width"
+  (/ (* \\pi h-bar) (sqrt (* 2 m E_1))))
+
+(defmacro (with-infix-math body)
+  "Expand a function to use infix math.
+#+END_SRC
+
+
+*** Modules
+
+Module names should consist only of lower-case characters and dashes.
+
+
+*** Classes
+
+Class names consist of one or more words separated by dashes.
+
+
+*** Global functions and methods
+
+*** Global mutable variables
+
+*** Dynamic Variables
 
 
 * Misc Notes and Ideas
@@ -1027,73 +1547,80 @@ in the various thought processes involved in designing this language. Hot propos
 probably incorporate into the language. "Explorations" are just stream-of-consciousness ramblings
 (I guess proposal are too, but those have a purpose).
 
-** Exploration: currying functions
-
-Generalized currying on the first n arguments of a function can be accomplished in fn:
-
-#+BEGIN_SRC fn
-(def (curry fun n)
-  "Curry fun over ths first n arguments."
-  (fn (& args)
-    (if (> (length args) n)
-        (apply fun args)
-        (curry $(apply fun (append args $&))
-               (- n (length args))))))
-
-(def plus (curry + 1))
-(plus 3 4)
-;; => 7
-(plus 3)
-;; => #<Function>
-(map (plus 3) [1 2 3])
-;; => [4 5 6]
-#+END_SRC
-
-I may be getting ahead of myself here, because there aren't any function options or decorators in fn
-yet, but one feature I used to like a lot was automatic currying. I'm no longer sold on the utility
-of this function, because the inclusion of ~$()~ in the language makes most uses of currying less
-painful, and it complicates function calling to an extent that probably doesn't warrant it. Manual
-currying might still make sense for certain functions (e.g. map, filter, etc). Here's some code
-comparing manual & automatic currying.
-
-#+BEGIN_SRC fn
-;;; currying calls
-(fun x)           ; automatic currying
-$(fun x $)        ; $ currying to create a function of one arg   (+3 chars)
-$(fun x $0 $1)    ; $ currying to create a function of two args  (+7 chars)
-$(apply fun x $&) ; $ currying to create a function of many args (+10 chars)
-(curry fun x)     ; manual curry function (+6 chars)
-
-;;; defining curried functions
-;; manual currying on the first n=2 arguments
-(def (fun & args)
-  (if (< (length args) 2) ; 2 is number of args to curry on
-      $(apply fun (cat args $&))
-      (apply execute-fun args)))
-;; manual currying using a curry function
-(def (fun & args)
-  (if (< (length args) 2)
-      (apply curry fun args)
-      (apply execute-fun args)))
-;; (potential) automatic currying solution using decorator option
-(def (fun & args)
-  (options 'decorate (auto-curry 2))
-  (apply execute-fun args))
-;; this also allows explicit parameter names, which actually is safer
-(def (fun x y z)
-  (options 'decorate (auto-curry 2))
-  (execute-fun x t z))
-#+END_SRC
-
-*Notes*:
-- w/r/t calls:
-  - There's a modest 3-character overhead incurred when using $ to curry a function to its
-    2nd-to-last argument. This is by far the most common use case in my opinion.
-  - With a curry function, the maximum overhead is 6 characters compared to any currying operation
-    w/s/e
-  - $ syntax is more flexible and isn't so sensitive to the order of the arguments.
-
+** Proposal: function options
 ** (Hot) Proposal: built-in anaphora
+
+*Updated proposal 2019/09/05*
+
+Anaphoric if, cond, and lambda are very handy. They are so useful, in fact, that I would like to
+make the built-in versions anaphoric. However, when macroexpansions include anaphoric operators,
+this would lead to sanitation problems, which we would most likely address by adding alternative,
+non-anaphoric versions to be used exclusively in macroexpansions.
+
+These are the proposed anaphoric forms. A convention is followed where implicitly bound variables
+have names starting with "$", in keeping with ~$()~ syntax.
+
+#+BEGIN_SRC fn
+;; for our example, we use a lookup function that returns null on failure
+(def my-plist ['key1 23 'key2 "hiya" 'key3 'lisp])
+(def (get-value plist x)
+  (if (= (head plist) x)
+      (head (tail plist))
+      null))
+
+;; anaphoric if binds the variable $it to the result of the test
+(def (if-test key)
+  (if (get-value my-plist key)
+      (String $it)
+      "<missing>"))
+(if-test 'key1) ;;=> "23.0"
+(if-test 'key2) ;;=> "hiya"
+(if-test 'not-even-a-key) ;;=> "<missing>"
+
+;; anaphoric cond binds the variable $it in each one of its result clauses
+(def (cond-test key1 key2)
+  (cond
+    (get-value my-plist key1) (String key1 "=" $it)
+    (get-value my-plist key2) (String key2 "=" $it)
+    true "no values"))
+(cond-test 'key3 'key2) ;;=> "key3=lisp"
+(cond-test 'lock1 'key1) ;;=> "key1=23.0"
+(cond-test 'lock1 'lock2) ;;=> "no values"
+
+;; anaphoric fn binds the variable $self to the function being created
+(def (fn-test n)
+  ;; compute factorial
+  ((fn (acc i)
+     (if (= i 0)
+         acc
+         ($self (* i acc) (- i 1))))
+    1
+    n))
+(fn-test 2) ;;=>2.0
+(fn-test 6) ;;=>720.0
+#+END_SRC
+
+These forms are no good for writing macros, so we need alternatives that do not create anaphoric
+bindings. The only question is what to call them.
+
+I suggest the names ~_if~, ~_cond~, and ~_fn~ for the sanitary versions. "m" may be a more appropriate
+prefix than "\_" (e.g. ~mif~), but if we decide to make this a convention used for sanitary version of
+macros, then it's clunkier; "_" is clearly not a part of the first word and doesn't appear in most
+symbol names, which is why I lean in that direction.
+
+Lastly, we consider the rule of anaphoric macros. In Common Lisp, it is very common to perform
+lookup operations that return NIL on failure and the appropriate value on success. Since the
+operation of checking for a key's existence is almost always coupled with getting its value, this
+seems sensible. However, depending on how I end up designing pattern matching on tables, ~case~ might
+make many of these usages unnecessary, making the built-in anaphora unnecessary. This would make the
+language, and especially macro code, somewhat prettier.
+
+Considering ~let~'s ability to bind recursive or even mutually-recursive functions, and since a ~loop~
+macro similar to Clojure's (but supporting general recursion) will likely be introduced, anaphoric
+~fn~ would have limited use.
+
+
+*original proposal*
 
 Anaphoric macros are so dang useful. I use AIF all over the place in my code. With that in mind,
 here's a proposal: what if the built-in forms were anaphoric? The canonical name for test results is
@@ -1215,6 +1742,44 @@ is this:
 #+END_SRC
 
 Unlike ~cond~, case will throw a runtime error if there are no matches.
+
+Below is a description of every built-in pattern (where obj refers to the match object):
+
+*Class and constant matchers:*
+The patterns below match objects based on their type or exact value and bind no variables.
+- ~<Num>~ :: Matches numbers equal to <Num>
+- ~<String>~ :: Matches strings equal to <String>
+- ~'<symbol>~ :: Matches symbols equal to symbols
+- _ :: Wildcard pattern. Matches everything
+
+
+- ~<symbol>~ :: (where symbol is not the wildcard _). Matches everything. Binds <symbol> to obj
+- ~[<subpattern*>]~ :: List pattern. Matches Lists with the corresponding structure. (E.g. [] only
+     matches the empty list, and [x y] only matches length-two lists). The elements of the list may
+     be any valid pattern. On match, the variables from every subpattern are bound. Name collisions
+     between any two subpatterns cause an error.
+- ~[<subpattern*> & <tail-pattern>]~ :: Like the List pattern, but has a variadic pattern matching.
+     The variadic parameter is matched as a list, so <tail-pattern> must match lists or the [&]
+     pattern will never match anything.
+- ~(<Class-Name> <subpattern*>)~ :: Matches an object based on the values of its fields. The structure
+     of the sub-patterns should mirror the class's parameter list. There must be at least as many
+     subpatterns as there are positional (including optional) parameters. These subpatterns will be
+     checked for matches against the corresponding fields of the object. To do matching on keyword
+     fields, simply put the quoted symbol as an argument to the pattern, followed immediately by the
+     corresponding subpattern (similar to how keyword arguments are passed to the constructor). Not
+     all keywords need to be provided. The ones which are omitted will be ignored. Finally, the
+     structure of a variadic field can be matched to a pattern using & followed by the subpattern.
+
+#+BEGIN_SRC fn
+(case list
+  ;; List patterns match lists that have the correct subpatterns as 
+  []        nil      ; empty list
+  [x y]     (+ x y)  ; list of exactly two elements
+  [hd & tl] (map $(+ hd $) tl))  ; variadic argument
+
+(defclass (Vec2 x y))
+
+#+END_SRC
 
 ** Proposed extension: ~let~ pattern destructuring
 
