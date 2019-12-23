@@ -132,6 +132,7 @@
     (fn-defclass "Null")
     (fn-defclass "Num")
     (fn-defclass "String" :constructor $(apply #'fnstring $))
+    (fn-defclass "Symbol" :constructor $(apply #'fnintern $))
 
     ;; sequence methods
     (fn-defmethod "head" (seq-sym) (make-param-list :pos `((,seq-sym)))

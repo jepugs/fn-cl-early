@@ -9,6 +9,7 @@ stuff is mostly accurate too.
 To further complicate things, the programming language is not fully implemented in the interpreter
 yet. Please stand by.
 
+
 * Introduction
 
 fn is a programming language in the Lisp family. It will feature a robust and streamlined object
@@ -45,7 +46,7 @@ special syntax objects or creating a pattern-based DSL.
 
 Expressions[fn:1] in fn are built from what are termed *forms*. The *forms* are a superset of all valid
 expressions in fn (i.e. all expressions are forms, but the converse is not true)[fn:2]. There are
-two varieties of forms: *lists*[fn:list-forms] and *atoms*. <<def:list-form>> *Lists* are compound forms
+two varieties of forms: *lists*[fn:list-forms] and *atoms*. <<def:list-forms>> *Lists* are compound forms
 which may contain other forms. We often refer to lists by their first subform, termed the *operator*.
 For example, ~(get a b)~ could be called a ~get~ form. <<def:atom>> *Atoms* are defined by the fact that
 they contain no subforms, and are divided into three kinds: symbols, numeric constants, and string
@@ -106,13 +107,14 @@ source code from within an fn program. This property is central to fn's metaprog
 which allow new syntax to be defined with relatively little effort.
 
 # TODO: link to macros section
-[fn:2] The line between forms and expressions can be blurry. For instance, the empty list ~()~ is not
-a legal expression on its own, but it is perfectly fine when it appears as a parameter list for a
-function, e.g. in the expression ~(fn () 17)~ which creates a constant-valued function of no
-arguments. This distinction is further exacerbated by the fact that fn's macro system allows
-definition of new syntax by manipulating forms prior to execution. A useful way to think about it is
+[fn:2] The reason why we separate forms from expressions is because new syntax can be defined using
+fn's macro system. Many forms that are /not/ valid expressions previously can become one if an
+appropriate macro is defined. (In fact, since macro system is Turing-complete, it is impossible to
+describe the syntax of an arbitrary fn program using a context-free grammar. By contrast, it is
+quite easy to describe the language of forms in this manner). A useful way to think about it is
 this: invalid /forms/ cause errors during /parsing/, while invalid /expressions/ cause errors during
-/evaluation/ (aka execution).
+/evaluation/ (aka execution) or /macroexpansion/ (the phase before evaluation in which macros are
+expanded into other expressions).
 
 ** <<syntax.atoms>>Atom Syntax In Depth
 
@@ -304,6 +306,64 @@ a.b.c
 
 A <<def:dotted-get>> *dotted get form* is any ~get~ form which could be written using dot syntax alone.
 Dotted get forms are used to look up macros, methods, and variables
+
+
+* <<eval>>Evaluation Model
+
+The *evaluator* is the component of fn which executes the process described by an *form*, updating the
+interpreter state as necessary, and returning a value. When a form is passed to the evaluator, we
+call that form an *expression*.
+
+It is convenient to think of the evaluator as a function $\text{eval} : E \times S \to V \times S$,
+where $E$ is the set of expressions, $S$ is the set of possible interpreter states, and $V$ is the
+set of possible return values[fn:forms-as-values]. In practice, errors can occur that prevent a
+value from being returned. (For instance, attempting to update the value of an immutable variable).
+
+[fn:forms-as-values] Note that because forms can be treated as data in fn, $E \subset V$.
+
+** <<eval.values>>Values and Objects
+
+*Values* are what we call the results of evaluation. fn is an object-oriented (OO) programming
+language. This means that every value is an *object*. Every object has a single *class*, which describes
+the object's structure.
+
+The following classes are built in to fn:
+
+| Class Name | Values with this class                                                 |
+|------------+------------------------------------------------------------------------|
+| ~Bool~       | Boolean constants ~true~ and ~false~                                       |
+| ~Class~      | Class objects                                                          |
+| ~Function~   | Functions                                                              |
+| ~List~       | Immutable singley-linked lists. May represent [[def:list-forms][list forms]]               |
+| ~Module~     | fn modules, see <<eval.state>>                                         |
+| ~Method~     | Methods                                                                |
+| ~Num~        | Double-precision floating-point numbers                                |
+| ~Null~       | The value ~null~                                                         |
+| ~String~     | Character strings                                                      |
+| ~Symbol~     | Symbols, which are internalized non-empty strings. Also a type of [[syntax.symbols][atom]] |
+
+** <<eval.state>>Global State and Modules
+
+All global state in fn is stored in objects called *modules*. Each module has a symbol for a name and
+contains two lookup tables: a *variable table* and a *macro table*. Both tables bind symbols on to
+vlues. Each entry in the variable table contains a value and a tag that tells whether or not this
+variable is mutable[fn:immutable-vars]. The entries in the macro table are functions that are used
+for macro expansion.
+# todo: link to macros
+
+Every evaluation in fn happens in the context of some module, called the *current module*. Any options
+modifying global bindings operate on this module. Every special form whose name begins with "def"
+modifies the current module, as do ~import~, ~import-from~, and ~set~ (some of the time).
+
+[fn:immutable-vars] Rather than establish a variable/constant dichotomy, in fn we elect to call all
+bindings variables. This leads to the oxymoron "immutable variable" (a term preferred over "constant
+variable"), but it makes it easier to talk about values bound to symbols.
+
+** <<eval.pipeline>>Evaluation pipeline
+
+fn uses a three phase process to go from source code to evaluation results. The first phase is
+parsing (also known as "reading" in traditional LISP parlance). During this step, text is converted
+into form objects, resulting in syntax errors when any 
 
 
 * Modules and Name Resolution
@@ -1396,21 +1456,26 @@ Sequence functions take a sequence object as their last argument.
 - (take-while fun seq), take-while0 :: take all contiguous elements satisfying fun
 - (drop-while fun seq), drop-while0 :: drop all contiguous elements satisfying fun
 - (map fun seq0 & seqs), map0 :: apply a function to
-- (filter fun seq), filter0
-- (zip & seqs), zip0
-- (group n seqs), group0
-- (group-by fun seq), group-by0
-- (interleave & seqs), interleave0
-- (dedupe seq ('by =)), dedupe0
-- (reverse seq)
-- (foldl fun init seq)
-- (foldr fun init seq)
+- (filter fun seq), filter0 :: take a subsequence of objects on which fun is true
+- (zip & seqs), zip0 :: equivalent to ~(map List <seqs> ...)~
+- (group n seqs), group0 ::
+- (group-by fun seq), group-by0 ::
+- (interleave & seqs), interleave0 ::
+- (dedupe seq ('by =)), dedupe0 :: remove duplicate objects from a sequence
+- (reverse seq) :: reverse the order of a sequence
+- (foldl fun init seq) ::
+- (foldr fun init seq) ::
+- (any? fun seq) :: true if any element of seq satisfies fun
+- (every? fun seq) :: true if every element of seq satisfies fun
 
 *sequence creation*
-- (cat & seqs), cat0
-- (cycle & items)
-- (repeat seq)
-- (range a b (step 1)), range0
+- (cat & seqs), cat0 :: concatenate sequences
+- (cycle & items) :: create an infinite sequence of the specified items
+- (repeat seq (times null)) :: create a sequence repeating the elements of seq. If times is null,
+     the sequence is infinite
+- (range a b (step 1)), range0 :: create a list of numbers from a to be incremented by step. If step
+     is positive, each x in the created sequence will satisfy a <= x < b and if step is negative, it
+     will be b < x <= a. An empty sequence may be returned. Nonempty sequences will begin with a.
 
 *** TODO Files and Streams
 

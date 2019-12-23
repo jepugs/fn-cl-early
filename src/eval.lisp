@@ -18,7 +18,7 @@
 (defpackage :fn.eval
   (:documentation "expression evaluator")
   (:use :cl :fn.util :fn.ast :fn.runtime :fn.values :fn.code :fn.runtime)
-  (:export :eval-ast :eval-code :eval-file :show :show-built-in))
+  (:export :defop :c :args :eval-ast :eval-code :eval-file :show :show-built-in))
 
 (in-package :fn.eval)
 

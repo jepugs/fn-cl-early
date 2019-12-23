@@ -18,10 +18,34 @@
 (require 'asdf)
 ;; this is guaranteed to be run from the project directory
 (load "fn.asd")
+
+;;;; command line arguments
+(defparameter output-dir nil
+  "Path to the directory where the compiled executable is placed.")
+(defparameter built-in-dir nil
+  "Path to the directory containing fn source files to be loaded as part of the built-in module.")
+(defparameter stdlib-dir nil
+  "Path to the directory containing standard library modules.")
+
+(defun process-args ()
+  (let ((args (fn.util:group 2 sb-ext:*posix-argv*)))
+    (mapcar $(cond
+               ((string= (car $) "--output-dir")
+                (setq output-d))
+               ((string= (car $) "--built-in-dir")
+                (setq built-in-dir (cadr $)))
+               ((string= (car $) "--stdlib-dir")
+                (setq stdlib-dir nil))))))
+
+(process-args)
 (require 'fn)
 
+;;; TODO: load built-in files
+
+;;; TODO: load standard library modules
+
 (sb-ext:save-lisp-and-die (concatenate 'string
-                                       (cadr sb-ext:*posix-argv*)
+                                       output-dir
                                        "/fn")
                           :toplevel #'fn.main:main
                           :executable t

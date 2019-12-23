@@ -1,0 +1,51 @@
+(def (not x)
+  (if x
+      false
+      true))
+
+(defmacro (or x & rest)
+  (if (empty? rest)
+      x
+      (let (g (gensym))
+        `(let (,g ,x)
+           (if ,g ,g (or ,@rest))))))
+
+(defmacro (and x & rest)
+  (if (empty? rest)
+      x
+      (let (g (gensym))
+        `(let (,g ,x)
+           (if ,g
+               (and ,@rest)
+               ,g)))))
+
+(defmacro (-> expr & forms)
+  "First argument threading macro."
+  (case (head forms)
+    [[op & args] & tl]  `(-> (,op ,expr ,@args) ,@tl)
+    [op & tl]           `(-> (,op ,expr) ,@tl)
+    []                  expr))
+
+(defmacro (->> expr & forms)
+  "Last argument threading macro."
+  (case forms
+    [[op & args] & tl]  `(->> (,op ,@args ,expr) ,@tl)
+    [op & tl]           `(->> (,op ,expr) ,@tl)
+    []                  expr))
+
+(defmacro (->$ expr & forms)
+  "Threading macro that passes arguments with the variable $it."
+  )
+
+
+(defmacro (if$ test then else)
+  "Anaphoric if. Binds the variable $it to the result of test before executing then or else as
+  appropriate."
+  `(let ($it ,test)
+     (if $it
+         ,then
+         ,else)))
+
+(defmacro (cond$ clauses)
+  (let (pairs (group 2 clauses))
+    (if pairs)))

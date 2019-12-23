@@ -30,7 +30,7 @@
 (define-error-test (validate-code (str->code "(cond)"))
     :message "cond: Too few arguments")
 (define-error-test (validate-code (str->code "(cond true false 3)"))
-    :message "cond: Odd number of arguments to cond")
+    :message "cond: Odd number of arguments")
 
 ;; def
 (define-error-test (validate-code (str->code "(def x)"))

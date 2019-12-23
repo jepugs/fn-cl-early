@@ -1,0 +1,18 @@
+* Design and implementation of underlying data structures
+
+The C++ code in this directory implements the built-in data structures of fn. For the purposes of
+development, the native structures will be phased into the project a little bit at a time.
+
+At the time of writing, all the objects in fn are represented by Common Lisp data structures. The
+next steps will involve implementing equivalent C++ data structures and slowly phasing these in
+using SBCL's ffi.
+
+This is the order in which I plan to implement native data structures
+- null
+- true and false
+- floats
+- strings
+- functions
+- lists
+
+Functions is going to be a really tough one, because that's going to be where 
